@@ -286,6 +286,11 @@ JSValue JS_NewArrayBuffer(JSContext *context, uint8_t *buffer, size_t length,
   return VALUE_OBJECT;
 }
 
+JSValue JS_NewArrayBufferCopy(JSContext *context, const uint8_t *buffer,
+                              size_t length) {
+  return VALUE_OBJECT;
+}
+
 uint8_t *JS_GetArrayBuffer(JSContext *context, size_t *length,
                            JSValueConst value) {
   *length = sizeof(framebuffer);
@@ -304,6 +309,11 @@ JSValue JS_GetTypedArrayBuffer(JSContext *context, JSValueConst value,
 JSValue JS_NewCFunctionMagic(JSContext *context, JSCFunctionMagic *function,
                              const char *name, int length, JSCFunctionEnum kind,
                              int magic) {
+  return VALUE_FRAME_FUNCTION;
+}
+
+JSValue JS_NewCFunction(JSContext *context, JSCFunction *function,
+                        const char *name, int length) {
   return VALUE_FRAME_FUNCTION;
 }
 

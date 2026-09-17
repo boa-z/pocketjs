@@ -8,6 +8,8 @@ typedef struct JSRuntime JSRuntime;
 typedef struct JSContext JSContext;
 typedef int64_t JSValue;
 typedef JSValue JSValueConst;
+typedef JSValue JSCFunction(JSContext *ctx, JSValueConst this_value,
+                            int argc, JSValueConst *argv);
 typedef JSValue JSCFunctionMagic(JSContext *ctx, JSValueConst this_value,
                                  int argc, JSValueConst *argv, int magic);
 
@@ -56,6 +58,10 @@ JSValue JS_GetTypedArrayBuffer(JSContext *context, JSValueConst value,
 JSValue JS_NewCFunctionMagic(JSContext *context, JSCFunctionMagic *function,
                              const char *name, int length, JSCFunctionEnum kind,
                              int magic);
+JSValue JS_NewCFunction(JSContext *context, JSCFunction *function,
+                        const char *name, int length);
+JSValue JS_NewArrayBufferCopy(JSContext *context, const uint8_t *buffer,
+                              size_t length);
 int JS_SetPropertyStr(JSContext *context, JSValueConst object, const char *name,
                       JSValue value);
 int JS_SetPropertyUint32(JSContext *context, JSValueConst object,
