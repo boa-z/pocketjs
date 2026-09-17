@@ -527,6 +527,7 @@ describe("semantic resolution", () => {
       chrome: [true, true, false, true],
       clear: [false, false, false, false], // admitted only by the private ipodtouch4-dev profile (fixed 320x480 portrait touch surface)
       cursor: [true, true, false, true],
+      "d211-demo": [false, false, false, false], // admitted only by the private d211-linux-dev profile (fixed 800x480 fbdev touch surface)
       gallery: [true, true, false, true],
       hero: [true, true, true, true],
       "hero-vue-sfc": [true, true, false, true],
