@@ -20,7 +20,7 @@
 //!   - opacity multiplies vertex alpha down the subtree (wrong on overlap,
 //!     per docs/DESIGN.md punt list).
 
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 
 use crate::layout::{floorf, roundf};
 use crate::spec;
@@ -438,6 +438,19 @@ pub struct PaintCache {
     /// a disc slot (JS misuse), which simply goes stale here and re-bakes.
     entries: Vec<(u32, i32)>,
     glyphs: Vec<GlyphPage>,
+    borders: Vec<([u32; 4], i32)>,
+    layouts: BTreeMap<u32, CachedTextLayout>,
+}
+
+// Node-indexed placement cache. Transforms and tint do not affect placement;
+// text, font revision, width and all typographic inputs do. Bounds prevent
+// retained or churned trees from growing this cache without limit.
+struct CachedTextLayout {
+    key: [u64; 6],
+    text: alloc::string::String,
+    glyphs: Vec<crate::text::GlyphPos>,
+    bounds: [f32; 4],
+    used: u64,
 }
 
 struct GlyphPage {
@@ -451,7 +464,80 @@ struct GlyphPage {
 
 impl PaintCache {
     pub const fn new() -> PaintCache {
-        PaintCache { entries: Vec::new(), glyphs: Vec::new() }
+        PaintCache { entries: Vec::new(), glyphs: Vec::new(), borders: Vec::new(), layouts: BTreeMap::new() }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_text_layouts(&mut self) { self.layouts.clear(); }
+
+    #[cfg(test)]
+    pub(crate) fn text_layout_usage(&self) -> (usize, usize, usize) {
+        (self.layouts.len(), self.layouts.values().map(|e| e.glyphs.capacity()).sum(),
+            self.layouts.values().map(|e| e.text.capacity()).sum())
+    }
+}
+
+// A run can reuse the resolved page while its glyph IDs remain inside it.
+// Font revisions and texture generations are checked again for every run;
+// this value never survives a draw or a font/resource mutation.
+#[derive(Clone, Copy)]
+pub struct GlyphSampler {
+    pub handle: u32,
+    first: u32,
+    end: u32,
+    columns: u32,
+    stride_x: u32,
+    stride_y: u32,
+    width: u32,
+    height: u32,
+}
+
+/// One source for coverage-page allocation, sampling and warmup accounting.
+pub(crate) struct GlyphPageLayout {
+    page: u32,
+    first: u32,
+    pub count: u32,
+    columns: u32,
+    stride_x: u32,
+    stride_y: u32,
+    width: u32,
+    height: u32,
+}
+
+impl GlyphPageLayout {
+    pub fn new(atlas: &crate::text::Atlas, gid: u16) -> Option<Self> {
+        if gid >= atlas.glyph_count { return None; }
+        let stride_x = atlas.coverage_width() + 2;
+        let stride_y = atlas.coverage_height() + 2;
+        let columns = spec::TEX_MAX_DIM / stride_x;
+        let rows = spec::TEX_MAX_DIM / stride_y;
+        if columns == 0 || rows == 0 { return None; }
+        let capacity = columns * rows;
+        let page = gid as u32 / capacity;
+        let first = page * capacity;
+        let count = (atlas.glyph_count as u32 - first).min(capacity);
+        Some(Self {
+            page, first, count, columns, stride_x, stride_y,
+            width: pow2_at_least(columns.min(count) * stride_x),
+            height: pow2_at_least(count.div_ceil(columns) * stride_y),
+        })
+    }
+
+    pub fn coverage_bytes(&self) -> usize { (self.width * self.height) as usize }
+}
+
+impl GlyphSampler {
+    pub fn contains(&self, gid: u16) -> bool {
+        (gid as u32) >= self.first && (gid as u32) < self.end
+    }
+
+    pub fn uv(&self, gid: u16) -> [f32; 4] {
+        let n = gid as u32 - self.first;
+        let x = (n % self.columns) * self.stride_x + 1;
+        let y = (n / self.columns) * self.stride_y + 1;
+        [x as f32 / self.width as f32, y as f32 / self.height as f32,
+            (x + self.stride_x - 2) as f32 / self.width as f32,
+            (y + self.stride_y - 2) as f32 / self.height as f32]
     }
 }
 
@@ -460,23 +546,18 @@ impl PaintCache {
 /// coverage alpha, so text color remains a per-quad tint. Pages are shared by
 /// all runs at every scale, with one transparent texel around each cell to
 /// prevent bilinear sampling from bleeding a neighboring glyph.
-fn glyph_page(
+pub(crate) fn glyph_page(
     cache: &mut PaintCache,
     textures: &mut Vec<crate::TexSlot>,
     free: &mut Vec<u32>,
     atlas: &crate::text::Atlas,
     revision: u64,
     gid: u16,
-) -> Option<(u32, [f32; 4])> {
+) -> Option<GlyphSampler> {
+    let layout = GlyphPageLayout::new(atlas, gid)?;
+    let GlyphPageLayout { page, first, count, columns, stride_x, stride_y, width, height } = layout;
     let cw = atlas.coverage_width();
     let ch = atlas.coverage_height();
-    let stride_x = cw + 2;
-    let stride_y = ch + 2;
-    let columns = spec::TEX_MAX_DIM / stride_x;
-    let rows = spec::TEX_MAX_DIM / stride_y;
-    if columns == 0 || rows == 0 { return None; }
-    let capacity = columns * rows;
-    let page = gid as u32 / capacity;
     // A load/stream update invalidates every page of that font. Release the
     // old generation before allocating its replacement; stale handles cannot
     // alias a new texture even if the free-list reuses the same slot.
@@ -495,10 +576,6 @@ fn glyph_page(
         &cache.glyphs[i]
     } else {
         if let Some(i) = cached { cache.glyphs.swap_remove(i); }
-        let first = page * capacity;
-        let count = (atlas.glyph_count as u32 - first).min(capacity);
-        let width = pow2_at_least(columns.min(count) * stride_x);
-        let height = pow2_at_least(count.div_ceil(columns) * stride_y);
         let byte_len = (width * height) as usize;
         let mut data = alloc::vec![0u128; byte_len.div_ceil(16)];
         let bytes = unsafe { core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, byte_len) };
@@ -512,6 +589,24 @@ fn glyph_page(
                 bytes[to..to + cw as usize].copy_from_slice(&source[from..from + cw as usize]);
             }
         }
+        // A guarded white block in unused page padding lets backends keep
+        // adjacent solid geometry in the glyph batch. Glyph UVs never include it.
+        let used_rows = count.div_ceil(columns) * stride_y;
+        if height >= used_rows + 6 && width >= 6 {
+            for y in used_rows + 2..used_rows + 6 {
+                let start = (y * width + 2) as usize;
+                bytes[start..start + 4].fill(255);
+            }
+        } else if count % columns != 0 && stride_x >= 8 && stride_y >= 8 {
+            let x = (count % columns) * stride_x + 2;
+            let y = (count / columns) * stride_y + 2;
+            if x + 4 <= width && y + 4 <= height {
+                for row in y..y + 4 {
+                    let start = (row * width + x) as usize;
+                    bytes[start..start + 4].fill(255);
+                }
+            }
+        }
         let mut palette = alloc::vec![0u128; 64];
         let colors = unsafe { core::slice::from_raw_parts_mut(palette.as_mut_ptr() as *mut u32, 256) };
         for (a, color) in colors.iter_mut().enumerate() { *color = 0x00ff_ffff | ((a as u32) << 24); }
@@ -523,11 +618,9 @@ fn glyph_page(
         cache.glyphs.push(GlyphPage { slot: atlas.slot, revision, page, handle, width, height });
         cache.glyphs.last()?
     };
-    let n = gid as u32 % capacity;
-    let x = (n % columns) * stride_x + 1;
-    let y = (n / columns) * stride_y + 1;
-    Some((entry.handle as u32, [x as f32 / entry.width as f32, y as f32 / entry.height as f32,
-        (x + cw) as f32 / entry.width as f32, (y + ch) as f32 / entry.height as f32]))
+    Some(GlyphSampler { handle: entry.handle as u32, first,
+        end: first + count, columns, stride_x, stride_y,
+        width: entry.width, height: entry.height })
 }
 
 impl Default for PaintCache {
@@ -1245,7 +1338,7 @@ impl<'a> Walker<'a> {
 
         // -- text run ----------------------------------------------------------
         if node.node_type == spec::NodeType::Text as u8 {
-            self.emit_text(dl, node, &r, &world, op, &clip, l.w, in_transform);
+            self.emit_text(dl, slot, node, &r, &world, op, &clip, l.w, in_transform);
             // Text children are absorbed into the run — do not recurse.
             return;
         }
@@ -1395,7 +1488,7 @@ impl<'a> Walker<'a> {
                     let node = &self.tree.slots[slot as usize];
                     let r = style::resolve(node, self.styles, true);
                     let anchor = Affine::translate(origin.0, origin.1);
-                    self.emit_text(dl, node, &r, &anchor, opacity, clip, node.layout.w, true);
+                    self.emit_text(dl, slot, node, &r, &anchor, opacity, clip, node.layout.w, true);
                 }
             }
         }
@@ -2049,6 +2142,21 @@ impl<'a> Walker<'a> {
         if coverage == 0 || h <= 0 || x1 <= x0 {
             return;
         }
+        // The straight middle of a vertical rounded gradient is one clipped
+        // gradient, not one solid rectangle per scanline. Keep the fractional
+        // side coverage and global stops; curved rows still use solid spans.
+        if h > 1 && vertical_gradient(fill) {
+            if let Fill::Grad { from, via, to, dir } = *fill {
+                let scaled = Fill::Grad {
+                    from: scale_alpha_coverage(from, coverage),
+                    via: via.map(|(color, position)| (scale_alpha_coverage(color, coverage), position)),
+                    to: scale_alpha_coverage(to, coverage), dir,
+                };
+                let clip = Clip { x0: x0 as f32, y0: py as f32, x1: x1 as f32, y1: (py + h) as f32 };
+                self.emit_screen_rect(dl, x0 as f32, sy0, x1 as f32, sy1, scaled, &clip);
+                return;
+            }
+        }
         let max_run = gradient_run_limit(fill);
         let mut x = x0;
         while x < x1 {
@@ -2062,6 +2170,53 @@ impl<'a> Walker<'a> {
             }
             x = next;
         }
+    }
+
+    fn border_texture(&mut self, width: f32, height: f32, radius: f32, border: f32) -> Option<(u32, u32, u32)> {
+        // Cache small, stable local shapes, so a parent scale reuses the same
+        // mask. Animated dimensions or stroke widths cannot grow residency
+        // past sixteen 128x128 masks (1 MiB); overflow uses analytic spans.
+        if width != roundf(width) || height != roundf(height) ||
+            width < 1.0 || height < 1.0 || width > 64.0 || height > 64.0 { return None; }
+        let density = self.raster_density;
+        let w = width as u32 * density;
+        let h = height as u32 * density;
+        let tw = pow2_at_least(w);
+        let th = pow2_at_least(h);
+        if tw > 128 || th > 128 { return None; }
+        let key = [width as u32, height as u32, radius.to_bits(), border.to_bits()];
+        if let Some(&(_, handle)) = self.paint_cache.borders.iter().find(|(k, _)| *k == key) {
+            if crate::tex_resolve(self.textures, handle).is_some() { return Some((handle as u32, tw, th)); }
+            self.paint_cache.borders.retain(|(k, _)| *k != key);
+        }
+        if self.paint_cache.borders.len() >= 16 { return None; }
+        let r = radius * density as f32;
+        let bw = border * density as f32;
+        let mut data = alloc::vec![0u128; ((tw * th * 4) as usize).div_ceil(16)];
+        let pixels = unsafe { core::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u32, (tw * th) as usize) };
+        pixels.fill(0x00ff_ffff);
+        for y in 0..h {
+            let row = y as f32 + 0.5;
+            let Some((left, right)) = self.rounded_interval_at_row(0.0, 0.0, w as f32, h as f32, r, row) else { continue; };
+            let inner = if pixel_interval_coverage(y as i32, bw, h as f32 - bw) > 0 {
+                self.rounded_interval_at_row(bw, bw, w as f32 - bw, h as f32 - bw,
+                    (r - bw).max(0.0), clampf(row, bw, h as f32 - bw))
+            } else { None };
+            for x in 0..w {
+                let alpha = if let Some((il, ir)) = inner {
+                    pixel_interval_coverage(x as i32, left, il.min(right)) +
+                        pixel_interval_coverage(x as i32, ir.max(left), right)
+                } else { pixel_interval_coverage(x as i32, left, right) };
+                pixels[(y * tw + x) as usize] |= alpha.min(255) << 24;
+            }
+        }
+        let handle = crate::tex_alloc(self.textures, self.tex_free, crate::Texture {
+            data, byte_len: (tw * th * 4) as usize, w: tw, h: th,
+            psm: spec::psm::PSM_8888, palette: None, linear: true, revision: 0,
+        });
+        if handle < 0 { return None; }
+        self.paint_cache.borders.push((key, handle));
+        Some((handle as u32, tw, th))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2093,6 +2248,10 @@ impl<'a> Walker<'a> {
         if sx1 <= sx0 || sy1 <= sy0 {
             return;
         }
+        // Reject covered primitives before mask lookup/allocation. Preserve
+        // a pixel for the rounded path's quantized antialiased fringe.
+        if sx1 + 1.0 <= clip.x0 || sx0 - 1.0 >= clip.x1 ||
+            sy1 + 1.0 <= clip.y0 || sy0 - 1.0 >= clip.y1 { return; }
         let w = sx1 - sx0;
         let h = sy1 - sy0;
         let scale_y = world.d.max(0.0);
@@ -2107,6 +2266,24 @@ impl<'a> Walker<'a> {
             self.emit_box(dl, world, x0, y0 + bwy, x0 + bwx, y1 - bwy, fill, clip);
             self.emit_box(dl, world, x1 - bwx, y0 + bwy, x1, y1 - bwy, fill, clip);
             return;
+        }
+
+        if world.a == world.d {
+            if let Fill::Flat(color) = fill {
+                let local_w = x1 - x0;
+                let local_h = y1 - y0;
+                let local_r = radius.min(local_w * 0.5).min(local_h * 0.5);
+                let local_bw = border_width.min(local_w * 0.5).min(local_h * 0.5);
+                if let Some((texture, tw, th)) = self.border_texture(local_w, local_h, local_r, local_bw) {
+                    let before = dl.words.len();
+                    self.emit_tex_quad(dl, &world.then(&Affine::translate(x0, y0)), local_w, local_h,
+                        texture, 1.0, clip, 0.0, 0.0,
+                        local_w * self.raster_density as f32 / tw as f32,
+                        local_h * self.raster_density as f32 / th as f32);
+                    if dl.words.len() > before { *dl.words.last_mut().unwrap() = color; }
+                    return;
+                }
+            }
         }
 
         let ix0 = floorf(sx0).max(floorf(clip.x0)).max(0.0) as i32;
@@ -2214,6 +2391,9 @@ impl<'a> Walker<'a> {
         if sx1 <= sx0 || sy1 <= sy0 {
             return;
         }
+        // Keep a one-pixel fringe for quantized rounded coverage.
+        if sx1 + 1.0 <= clip.x0 || sx0 - 1.0 >= clip.x1 ||
+            sy1 + 1.0 <= clip.y0 || sy0 - 1.0 >= clip.y1 { return; }
         let w = sx1 - sx0;
         let h = sy1 - sy0;
         let scale_y = world.d.max(0.0);
@@ -2329,18 +2509,9 @@ impl<'a> Walker<'a> {
             return;
         }
         let rr = r * r;
-        let tall_middle = !vertical_gradient(&fill);
-        let mid_y0 = if tall_middle {
-            (ceilf(sy0 + r) as i32).max(iy0).min(iy1)
-        } else {
-            iy0
-        };
-        let mid_y1 = if tall_middle {
-            (floorf(sy1 - r) as i32).max(iy0).min(iy1)
-        } else {
-            iy0
-        };
-        if tall_middle && mid_y1 > mid_y0 {
+        let mid_y0 = (ceilf(sy0 + r) as i32).max(iy0).min(iy1);
+        let mid_y1 = (floorf(sy1 - r) as i32).max(iy0).min(iy1);
+        if mid_y1 > mid_y0 {
             let span_x0 = sx0.max(ix0 as f32);
             let span_x1 = sx1.min(ix1 as f32);
             if span_x1 > span_x0 {
@@ -2393,7 +2564,7 @@ impl<'a> Walker<'a> {
             }
         }
         for py in iy0..iy1 {
-            if tall_middle && py >= mid_y0 && py < mid_y1 {
+            if py >= mid_y0 && py < mid_y1 {
                 continue;
             }
             let y_coverage = pixel_interval_coverage(py, sy0, sy1);
@@ -2607,6 +2778,7 @@ impl<'a> Walker<'a> {
     fn emit_text(
         &mut self,
         dl: &mut DrawList,
+        node_slot: u32,
         node: &crate::tree::Node,
         r: &style::Resolved,
         world: &Affine,
@@ -2650,24 +2822,79 @@ impl<'a> Walker<'a> {
         let Some(atlas) = self.fonts.atlas(slot) else { return };
         let (cell_w, cell_h) = (atlas.cell_w as f32, atlas.cell_h as f32);
         let mut scratch = core::mem::take(&mut self.glyph_scratch);
-        scratch.clear();
-        self.fonts
-            .layout_run(&run, slot, r.tracking, r.line_height, r.text_align, box_w, &mut scratch);
+        // Keep the placement map separate while glyph pages may be allocated.
+        let mut layouts = core::mem::take(&mut self.paint_cache.layouts);
+        let key = [slot as u64, self.font_revisions[slot as usize], r.tracking.to_bits() as u64,
+            r.line_height.to_bits() as u64, r.text_align as u64, box_w.to_bits() as u64];
+        let mut cached = atlas.stream.is_none() && layouts.get(&node_slot)
+            .is_some_and(|entry| entry.key == key && entry.text == run);
+        if !cached {
+            layouts.remove(&node_slot);
+            scratch.clear();
+            let misses = self.fonts.misses.get();
+            self.fonts.layout_run(&run, slot, r.tracking, r.line_height, r.text_align, box_w, &mut scratch);
+            if scratch.len() <= 256 && scratch.capacity() > 256 { scratch.shrink_to_fit(); }
+            if atlas.stream.is_none() && self.fonts.misses.get() == misses &&
+                run.capacity() <= 256 && scratch.capacity() <= 256 {
+                // At most 256 strings (64 KiB) and 16,384 placements (256 KiB),
+                // plus entry metadata. Streamed/missing glyphs bypass caching.
+                while layouts.len() >= 256 || layouts.values().map(|e| e.glyphs.capacity()).sum::<usize>() + scratch.capacity() > 16_384 {
+                    let oldest = *layouts.iter().min_by_key(|(_, e)| e.used).unwrap().0;
+                    layouts.remove(&oldest);
+                }
+                let mut bounds = [f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
+                for g in &scratch {
+                    bounds[0] = bounds[0].min(g.x); bounds[1] = bounds[1].min(g.y);
+                    bounds[2] = bounds[2].max(g.x + cell_w); bounds[3] = bounds[3].max(g.y + cell_h);
+                }
+                layouts.insert(node_slot, CachedTextLayout { key, text: run, bounds,
+                    glyphs: core::mem::take(&mut scratch), used: self.frame });
+                cached = true;
+            }
+        }
+        let glyphs = if cached {
+            let entry = layouts.get_mut(&node_slot).unwrap();
+            entry.used = self.frame;
+            if world.is_axis_aligned() && world.a > 0.0 && world.d > 0.0 {
+                let (x0, y0) = world.apply(entry.bounds[0], entry.bounds[1]);
+                let (x1, y1) = world.apply(entry.bounds[2], entry.bounds[3]);
+                // Include a pixel for the unscaled run's anchor rounding.
+                if x1 + 1.0 <= clip.x0 || x0 - 1.0 >= clip.x1 || y1 + 1.0 <= clip.y0 || y0 - 1.0 >= clip.y1 {
+                    self.glyph_scratch = scratch;
+                    self.paint_cache.layouts = layouts;
+                    return;
+                }
+            }
+            &entry.glyphs
+        } else { &scratch };
         if world.is_axis_aligned() && (world.a != 1.0 || world.d != 1.0) {
-            for g in &scratch {
+            let mut page: Option<GlyphSampler> = None;
+            // The 2D overflow stack already clips pixels with SCISSOR. Keep
+            // full glyph endpoints inside the viewport: reconstructing UVs
+            // at a moving inner clip changes the rounded quad's sampling,
+            // including ink that remains visible to the left of that clip.
+            let viewport = Clip::viewport(self.screen);
+            let glyph_clip = if self.in_3d { clip } else { &viewport };
+            for g in glyphs {
                 let (x, y) = world.apply(g.x, g.y);
                 if x + cell_w * world.a <= clip.x0 || x >= clip.x1 ||
                     y + cell_h * world.d <= clip.y0 || y >= clip.y1 || !atlas.stream_visible(g.codepoint, g.gid) {
                     continue;
                 }
-                let Some((texture, uv)) = glyph_page(self.paint_cache, self.textures, self.tex_free,
-                    atlas, self.font_revisions[slot as usize], g.gid) else { continue; };
+                if !page.as_ref().is_some_and(|page| page.contains(g.gid)) {
+                    page = glyph_page(self.paint_cache, self.textures, self.tex_free,
+                        atlas, self.font_revisions[slot as usize], g.gid);
+                }
+                let Some(page) = page.as_ref() else { continue; };
+                let texture = page.handle;
+                let uv = page.uv(g.gid);
                 let glyph_world = world.then(&Affine::translate(g.x, g.y));
                 let before = dl.words.len();
-                self.emit_tex_quad(dl, &glyph_world, cell_w, cell_h, texture, 1.0, clip, uv[0], uv[1], uv[2], uv[3]);
+                self.emit_tex_quad(dl, &glyph_world, cell_w, cell_h, texture, 1.0, glyph_clip, uv[0], uv[1], uv[2], uv[3]);
                 if dl.words.len() > before { *dl.words.last_mut().unwrap() = color; }
             }
             self.glyph_scratch = scratch;
+            self.paint_cache.layouts = layouts;
             return;
         }
         let start = dl.words.len();
@@ -2675,7 +2902,7 @@ impl<'a> Walker<'a> {
         dl.words.push(0); // patched below: slot | count << 16
         dl.words.push(color);
         let mut n: u32 = 0;
-        for g in &scratch {
+        for g in glyphs {
             // Glyph cells stay axis-aligned; only the anchor transforms.
             let (sx, sy) = world.apply(g.x, g.y);
             let (rx, ry) = (roundf(sx), roundf(sy));
@@ -2705,6 +2932,7 @@ impl<'a> Walker<'a> {
             dl.words[start + 1] = (slot as u32) | (n << 16);
         }
         self.glyph_scratch = scratch;
+        self.paint_cache.layouts = layouts;
     }
 
     /// Emit one TEXT_RUN (native text path; format in spec.ts): header words
