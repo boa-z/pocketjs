@@ -123,6 +123,12 @@ QGLFormat pocketJsGlFormat()
 {
     QGLFormat format;
     format.setRgba(true);
+    // Qt's E7 default chooses RGB565 even on a 32-bit desktop. Request
+    // eight-bit channels so gradients do not acquire a dither grid.
+    format.setRedBufferSize(8);
+    format.setGreenBufferSize(8);
+    format.setBlueBufferSize(8);
+    format.setAlphaBufferSize(0);
     format.setDoubleBuffer(true);
     const PocketJsSymbianExtensionV1 *extension =
         pocketJsNativeExtension();
@@ -2634,12 +2640,17 @@ void PocketJsRuntime::initializeGL()
     const char *renderer = reinterpret_cast<const char *>(glGetString(GL_RENDERER));
     GLint maximumTextureSize = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximumTextureSize);
+    GLint redBits = 0, greenBits = 0, blueBits = 0, alphaBits = 0;
+    glGetIntegerv(GL_RED_BITS, &redBits);
+    glGetIntegerv(GL_GREEN_BITS, &greenBits);
+    glGetIntegerv(GL_BLUE_BITS, &blueBits);
+    glGetIntegerv(GL_ALPHA_BITS, &alphaBits);
     qWarning(
-        "PocketJS GLES2: version=%s vendor=%s renderer=%s maxTexture=%d",
+        "PocketJS GLES2: version=%s vendor=%s renderer=%s maxTexture=%d rgbaBits=%d/%d/%d/%d",
         version == 0 ? "unknown" : version,
         vendor == 0 ? "unknown" : vendor,
         renderer == 0 ? "unknown" : renderer,
-        maximumTextureSize
+        maximumTextureSize, redBits, greenBits, blueBits, alphaBits
     );
 #ifdef POCKETJS_PERF_TRACE
 #ifdef POCKETJS_GL_STAGES
@@ -2655,6 +2666,11 @@ void PocketJsRuntime::initializeGL()
         trace.write(renderer == 0 ? "unknown" : renderer);
         trace.write("\n# max_texture_size\t");
         trace.write(QByteArray::number(maximumTextureSize));
+        trace.write("\n# framebuffer_rgba_bits\t");
+        trace.write(QByteArray::number(redBits) + " " +
+            QByteArray::number(greenBits) + " " +
+            QByteArray::number(blueBits) + " " +
+            QByteArray::number(alphaBits));
         trace.write("\n");
     }
 #endif

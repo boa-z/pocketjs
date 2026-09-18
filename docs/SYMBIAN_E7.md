@@ -279,6 +279,12 @@ The experimental host has these runtime semantics:
 
 ### Measure frame work
 
+**The host requests RGB888 color buffers.** Qt's default E7 format selects
+RGB565 despite the 32-bit system desktop, adding a dither grid to gradients
+and baked artwork. The request uses eight bits for each RGB channel and no
+alpha buffer. Startup logs and the trace's `framebuffer_rgba_bits` field
+report the channel sizes returned by GL, so a fallback remains observable.
+
 The GLES backend joins adjacent ranges with matching textures and scissors,
 skips repeated scissor state, and uses direct coordinates for a native-sized
 viewport. **A 4 × 4 opaque patch in unused font-atlas padding** lets solid fills

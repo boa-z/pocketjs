@@ -445,6 +445,10 @@ describe("experimental Nokia E7 runtime profile", () => {
     expect(runtime).toContain("#include <QtOpenGL/QGLWidget>");
     expect(runtime).toContain("class PocketJsRuntime : public QGLWidget");
     expect(runtime).toContain("QGLFormat pocketJsGlFormat()");
+    expect(runtime).toContain("format.setRedBufferSize(8)");
+    expect(runtime).toContain("format.setGreenBufferSize(8)");
+    expect(runtime).toContain("format.setBlueBufferSize(8)");
+    expect(runtime).toContain("format.setAlphaBufferSize(0)");
     expect(runtime).toContain("format.setDoubleBuffer(true)");
     expect(runtime).toContain("format.setDepth(");
     expect(runtime).toContain(
@@ -472,7 +476,7 @@ describe("experimental Nokia E7 runtime profile", () => {
     expect(runtime).not.toContain("grabFrameBuffer");
     expect(runtime).toContain("updateGL();");
     expect(runtime).not.toContain("QPainter");
-    expect(runtime).not.toContain("framebuffer_");
+    expect(runtime).not.toMatch(/\bQImage\s+framebuffer_\b/);
     expect(runtime).not.toContain("ui_render(");
     expect(runtime).toContain("delta_ms");
     expect(runtime).toContain("present_ms");
