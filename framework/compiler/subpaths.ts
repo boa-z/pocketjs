@@ -75,6 +75,7 @@ export const SUBPATHS: Record<string, SubpathDecl> = {
   resource: { file: { solid: "framework/src/resource.ts" } },
   audio: { file: "framework/src/audio-api.ts", aliases: TWINS },
   ipc: { file: "framework/src/ipc-api.ts", aliases: TWINS },
+  "scheduler-polyfill": { file: "framework/src/scheduler-polyfill.ts", aliases: TWINS },
   media: { file: "framework/src/media.ts", aliases: TWINS },
   "media/provider": { file: "tools/media-stream.ts" },
   "media/audio": { file: "contracts/spec/media-adpcm.ts" },
