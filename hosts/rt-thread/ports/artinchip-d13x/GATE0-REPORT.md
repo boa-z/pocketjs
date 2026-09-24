@@ -150,7 +150,28 @@ present on all 38 members before and after.
 | Check | Result |
 |-------|--------|
 | `check-abi.py` (18 assertions) | **PASS** |
-| `check-sdk.py` (14 assertions) | **PASS** (2 unrelated pre-existing changes waived) |
+| `check-sdk.py` (14 assertions) | **PASS** with `--override-sdk` (2 unrelated pre-existing changes waived) |
+| `apply-sdk.py --check` | **PASS** — "the SDK matches the overlay" |
+
+`check-sdk.py` asserts that the SDK is on `pocketjs-d13x` and that the pinned
+`base_commit` (`f7572509`) is still an **ancestor** of HEAD — not that HEAD
+equals it. `base_commit` is the fork point, so the port branch is expected to
+sit ahead of it; requiring equality would fail the moment the port's own work
+was committed. At the time the Gate 0 image was built the branch had no port
+commits, so HEAD and the fork point coincided; the SDK commit that landed
+afterwards (`16837b2d`) is one commit on top, and the ancestry assertion still
+holds.
+
+In **strict** mode (no `--override-sdk`) the run reports FAIL, because the
+product tree carries two uncommitted changes that are **not** the port's:
+`M .vscode/settings.json` and an untracked
+`packages/third-party/mbedtls/ports/src/tls_certificate.c`. Both pre-date this
+work and were deliberately left untouched; the port touches only
+`packages/third-party/pocketjs/`, `application/rt-thread/pocketjs-smoke/`,
+`target/configs/d13x_d50t-2-lite_rt-thread_pocketjs-smoke_defconfig` and one
+added `source` line in `packages/third-party/Kconfig`. The strict FAIL is the
+gate doing its job — it is telling us the product tree is dirty, not that the
+port is broken.
 
 ### ELF-level, on the linked firmware
 
@@ -266,6 +287,15 @@ heap is reserved by Gate 0 itself.
    must re-run this gate.
 7. **`reg.exe` is blocked by security policy** during SCons. The probe is
    non-fatal and the build completes, but the warning is noise.
+8. **SCons is not stdlib and must be discovered.** Luban-Lite is built by
+   SCons, which is installed into one specific interpreter (here: SCons 4.11.1
+   in the tooling venv) - not necessarily the one that launches the build
+   script. A bare `python tools/build-firmware.py` under a different
+   interpreter used to fail late and confusingly with `No module named SCons`.
+   `build-firmware.py` now probes for an interpreter that can `import SCons`
+   (env override → current → tooling venv → `PATH`) and stops with the exact
+   `pip install scons` line if none qualifies; override with
+   `POCKETJS_SCONS_PYTHON`.
 
 ---
 
@@ -278,7 +308,7 @@ heap is reserved by Gate 0 itself.
 | 0a | Flash the image on D50T-2-Lite, capture the console |
 | 0b | Confirm `pjs_abi` → `RESULT PASS` on silicon |
 | 0c | Confirm `pjs_abi_panic` aborts and halts |
-| 0d | Record the run under `.pocket-build/validation/d13x/gate0/<run>/` and update this report |
+| 0d | Record the run under `.pocket-build/d13x/validation/gate0/<run>/` and update this report |
 
 Only after 0a–0d: **Gate 1 — retained UI core (`no_std` + alloc)**, which also
 closes issue 2 above.
@@ -287,20 +317,23 @@ closes issue 2 above.
 
 ## Appendix — evidence
 
-`.pocket-build/d13x/validation/gate0/20260924T2203/` (not committed):
+`.pocket-build/d13x/validation/gate0/20260924T222844/` (not committed). The
+whole bundle is reproduced by the one documented command,
+`python tools/build-firmware.py -j8`; nothing here is transcribed by hand.
 
 ```
 images/d13x.elf            linked firmware
-images/d13x.bin            flat binary
+images/d13x.bin            flat binary            (220,988 B)
 images/d13x.map            link map
 images/*.img               flashable image
 images/bootcfg.txt         boot config
 elf-header.txt             readelf -h   (Flags: 0x5, RVC, double-float ABI)
 elf-attributes.txt         readelf -A   (merged ISA attribute)
 elf-pjs-symbols.txt        nm           (38 pjs_* symbols)
-elf-size.txt               size
-check-abi.txt              RESULT: PASS
-check-sdk.txt              RESULT: PASS
+elf-size.txt               size         (.text 213,228 / .data 7,740 / .bss 18,812)
+check-abi.txt              RESULT: PASS  (18 assertions)
+check-sdk.txt              RESULT: PASS  (14 assertions, --override-sdk)
+apply-sdk-check.txt        clean: the SDK matches the overlay
 ```
 
 `build-native.py` also writes a receipt with the rustc/cargo versions, the

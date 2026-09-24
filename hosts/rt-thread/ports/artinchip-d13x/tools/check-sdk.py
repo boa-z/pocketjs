@@ -10,7 +10,9 @@ error by default, not a warning.
 
 Checks:
   * git branch is versions.toml [luban_lite].port_branch
-  * git HEAD equals versions.toml [luban_lite].base_commit
+  * git HEAD descends from versions.toml [luban_lite].base_commit (the fork
+    point stays in history; HEAD is expected to be ahead of it on the port
+    branch, so equality is not required)
   * every uncommitted change is confined to the port's own paths - the product
     line must not be carrying stray edits
   * CPUNAME / -march / -mabi / -mcmodel read from d13x/rtconfig.py
@@ -128,10 +130,27 @@ def main() -> int:
 
     actual_sha = pe.sdk_head_sha()
     print(f"actual  : {actual_sha}  (branch {branch})")
-    if not check(actual_sha == expected_sha,
-                 "SDK HEAD matches versions.toml base_commit",
-                 f"expected {expected_sha}, got {actual_sha}"):
-        if not args.override_sdk:
+
+    # base_commit is the fork point, not the tip. On the port branch HEAD is
+    # *expected* to be ahead of it, so requiring equality would fail the moment
+    # the port's own work is committed. What must hold is that the pinned
+    # baseline is still in this branch's history - otherwise the port sits on
+    # the wrong tree, or the history was rewritten (both forbidden).
+    if actual_sha == expected_sha:
+        pe.ok("SDK HEAD is the pinned baseline commit")
+    elif pe.sdk_head_descends_from(expected_sha):
+        ahead = pe.sdk_commits_ahead(expected_sha)
+        pe.ok("SDK HEAD descends from the pinned baseline")
+        print(f"       ({ahead} port commit(s) on top of {expected_sha[:12]})")
+    else:
+        detail = (
+            f"base_commit {expected_sha[:12]} is not an ancestor of HEAD "
+            f"{actual_sha[:12]} - wrong baseline, or rewritten history"
+        )
+        if args.override_sdk:
+            WARNINGS.append(f"baseline mismatch accepted via --override-sdk: {detail}")
+        else:
+            check(False, "SDK HEAD descends from versions.toml base_commit", detail)
             print()
             print("Refusing to continue: the SDK is not the validated baseline.")
             print("Either check out the pinned commit, or re-run with --override-sdk")
@@ -139,7 +158,6 @@ def main() -> int:
             print()
             print(f"RESULT: FAIL ({len(FAILURES)} check(s) failed)")
             return 1
-        WARNINGS.append("SDK SHA mismatch accepted via --override-sdk")
 
     # The port branch is expected to differ from base_commit - that is the whole
     # point of it. What must not happen is a change outside the port's own paths.
