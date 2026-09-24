@@ -11,24 +11,30 @@ branch = "d13x"
 remote = "https://github.com/boa-z/pocketjs.git"
 
 [luban_lite]
-repository = "artinchip/luban-lite"
-# Official release channel: https://github.com/artinchip/luban-lite
-# ("This repository is the official release channel for ArtInchip's Luban SDK")
+# The SDK this port builds against.
 #
-# NOTE: the spec asked for gitee.com/artinchip/luban-lite on branch `master`.
-# Two deviations were forced by reality and are recorded rather than hidden:
-#   1. gitee.com returns HTTP 401 for anonymous git access, so it cannot be
-#      cloned without credentials. The official GitHub mirror was used instead.
-#   2. The official repository has no `master` branch; `main` is the default
-#      and only branch.
-url = "https://github.com/artinchip/luban-lite.git"
-commit = "77fbe30dd2de366fae702ece84e1694153d94591"
-branch = "main"
-# Upstream tip date. This mirror is a 2024 snapshot, not the live gitee tree.
-upstream_pushed_at = "2024-02-23T12:12:03Z"
-# Sparse checkout: doc/ and docs/ are excluded (they are ~800 images and have
-# no bearing on a firmware build). Everything the D13x build needs is present.
-checkout = "sparse"
+# History, recorded rather than hidden: the port first pinned
+# github.com/artinchip/luban-lite. That was abandoned on 2026-09-24 by explicit
+# user direction, because that mirror cannot support the target board:
+#   * It is frozen at v1.0.3 (pushed 2024-02-23), has exactly one branch
+#     (`main`) and zero tags, while this product SDK is based on V1.3.2.
+#   * That snapshot has no D133ECS support at all - no `ram_param.c` (the PSRAM
+#     fuse/variant table that makes `aic_get_ram_size()` correct), no
+#     `CPU_PSRAM_BASE`/`CPU_SRAM_BASE`, and no `target/d13x/d50t-2-lite/`.
+#   * Re-deriving the board on top of v1.0.3 would have meant back-porting the
+#     chip Kconfig, the memory map and the PSRAM bring-up, i.e. exactly the
+#     "unrecorded SDK upgrade" the spec forbids.
+local_path = "C:/Users/JCSH/Documents/Project/D50T-2-Lite/luban-lite-jc-d50t-rev"
+remote = "https://github.com/boa-w/luban-lite-jc-d50t-rev.git"
+release = "Luban-Lite V1.3.2"
+
+# Product branch the port branch was cut from.
+base_branch = "codex/d50t-meter-adaptation"
+base_commit = "f7572509111d1c70962e6347e5ad7bc87b77fbba"
+
+# The independent PocketJS port branch. All D13x port work lands here so the
+# product line stays untouched; this branch is never merged back automatically.
+port_branch = "pocketjs-d13x"
 
 [rust]
 # Pinned deliberately. Matches engine/ui-cabi/rust-toolchain.toml so Gate 1
@@ -55,20 +61,43 @@ panic = "abort"
 freestanding = true
 
 [firmware_toolchain]
-# Bundled with the D50T product SDK. The official Luban-Lite repo does not
-# vendor a toolchain, and this is the same Xuantie ELF toolchain the SDK
-# expects (PREFIX riscv64-unknown-elf-).
+# Vendored by the product SDK at <sdk>/toolchain (git-ignored upstream, so it
+# is present in a working checkout but absent from a bare clone).
 vendor = "Xuantie"
 release = "Xuantie-900 elf newlib gcc Toolchain V2.6.1 B-20220906"
 gcc = "10.2.0"
+binutils = "2.35"
 prefix = "riscv64-unknown-elf-"
+# binutils 2.35 cannot parse the extension names LLVM 20 writes into
+# Tag_RISCV_arch (zmmul/zaamo/zalrsc/zca/zcd/zcf), so the link dies with
+# "failed to merge target specific data" once per libc member. The Rust archive
+# is therefore passed through tools/patch-riscv-attrs.py, which drops
+# .riscv.attributes and leaves e_flags (the ABI) untouched. See README.md.
+attribute_normalisation = "patch-riscv-attrs.py"
 
 [firmware_flags]
 # Read from bsp/artinchip/sys/d13x/rtconfig.py in the pinned SDK, CPUNAME=e907fdp.
 march = "rv32imafdcpzpsfoperand_xtheade"
 mabi = "ilp32d"
-mcmodel = "medlow"
+# rtconfig.py line 103 sets -mcmodel=medany. Rust's target JSON leaves the
+# code model at LLVM's default (`small`/medlow). Both reach every D13x region
+# (SRAM 0x3004_0000, PSRAM 0x4000_0000) from absolute zero, so they are
+# interchangeable here; recorded so the mismatch is a known, measured fact
+# rather than a surprise.
+mcmodel = "medany"
+mcmodel_rust = "small"
 # The SDK's own module build uses exactly this subset, which is the precedent
 # for the Rust target's ISA choice.
 m_device_march = "rv32imafdc"
 m_device_mabi = "ilp32d"
+# Link line for the RT-Thread kernel (rtconfig.py), reproduced so the Rust
+# staticlib is appended to the same flags the C objects use.
+link_flags = "-nostartfiles -Wl,--no-whole-archive -lgcc -Wl,-gc-sections -Wl,-zmax-page-size=1024"
+
+[board]
+name = "d50t-2-lite"
+soc = "D133ECS"
+psram_size = "0x1000000"
+sram_size = "0x100000"
+app = "pocketjs-smoke"
+defconfig = "d13x_d50t-2-lite_rt-thread_pocketjs-smoke_defconfig"
