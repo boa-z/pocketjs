@@ -29,10 +29,16 @@
    way. */
 #define PJS_ALIGNOF(t) ((uint32_t)__alignof__(t))
 
-/* The Rust GlobalAlloc depends on this promise. RT-Thread's heap is 8-byte
- * aligned (RT_ALIGN_SIZE), so this holds; it is asserted at runtime anyway so
- * a misconfigured heap fails loudly instead of corrupting f64 values. */
-#define PJS_HOST_ALIGN 8
+/* Alignment the RT-Thread heap itself guarantees - whatever the build was
+ * configured with, NOT a hardcoded 8. On this board CONFIG_RT_ALIGN_SIZE is 4,
+ * so rt_malloc returns 4-byte-aligned memory. The first hardware run proved the
+ * old "the heap gives 8" assumption wrong: the probe aborted on its very first
+ * Box<u32>, which only asked for 4.
+ *
+ * Requests above this are satisfied by over-allocating, so the contract holds
+ * for any RT_ALIGN_SIZE. The allocator lives in pocketjs_alloc.c; the constant
+ * is repeated here only so this file can describe the failure it caused. */
+#define PJS_HEAP_ALIGN ((uint32_t)RT_ALIGN_SIZE)
 
 /* ------------------------------------------------------------------ */
 /* Compile-time cross-check of the shared layout against the C compiler */
@@ -81,30 +87,10 @@ void pjs_host_log(const char *msg, uint32_t len)
 }
 
 /*
- * Gate 0 allocator seam.
- *
- * Backed by the RT-Thread system heap for this gate. Phase 1 replaces the body
- * with aic_memheap_malloc(MEM_PSRAM_SW) - the Rust side never changes, because
- * it only knows this callback.
+ * The allocator seam (pjs_host_alloc / pjs_host_free) lives in
+ * pocketjs_alloc.c, so it can be compiled and exercised on the host with a
+ * stubbed heap - see tools/host-test/.
  */
-void *pjs_host_alloc(uint32_t size)
-{
-    void *p = rt_malloc(size ? size : 1);
-
-    if (p != RT_NULL && (((uintptr_t)p) & (PJS_HOST_ALIGN - 1)) != 0) {
-        rt_kprintf(PJS_TAG "FATAL: rt_malloc returned %p, not %u-byte aligned\n",
-                   p, (unsigned)PJS_HOST_ALIGN);
-        return RT_NULL;
-    }
-    return p;
-}
-
-void pjs_host_free(void *ptr)
-{
-    if (ptr != RT_NULL) {
-        rt_free(ptr);
-    }
-}
 
 void pjs_host_abort(void)
 {
@@ -431,7 +417,25 @@ static void case_alloc(void)
     expect_u32("alloc.vec_sum", rep.vec_sum, want_sum);
     expect_u32("alloc.string_len", rep.string_len, (uint32_t)strlen(s));
     expect_u32("alloc.string_hash", rep.string_hash, want_hash);
+    report("alloc.align8", rep.align8_ok == 1u);
     report("alloc.over_aligned_64", rep.align_ok == 1u);
+
+    /* The host allocator's own contract, checked with no Rust in the loop.
+     * This is the exact thing that failed on the first hardware run, so it is
+     * verified directly rather than only through the GlobalAlloc wrapper. */
+    {
+        void *p8 = pjs_host_alloc(37u, 8u);
+        void *p64 = pjs_host_alloc(37u, 64u);
+        void *p4 = pjs_host_alloc(37u, 4u);
+
+        report("host.alloc_align4", p4 != RT_NULL && ((uintptr_t)p4 & 3u) == 0u);
+        report("host.alloc_align8", p8 != RT_NULL && ((uintptr_t)p8 & 7u) == 0u);
+        report("host.alloc_align64", p64 != RT_NULL && ((uintptr_t)p64 & 63u) == 0u);
+
+        pjs_host_free(p4, 4u);
+        pjs_host_free(p8, 8u);
+        pjs_host_free(p64, 64u);
+    }
 
     pjs_probe_mem_stats(&live, &peak, &allocs, &frees, &fails);
 

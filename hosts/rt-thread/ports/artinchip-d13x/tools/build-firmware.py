@@ -148,6 +148,9 @@ def evidence(run_dir: Path) -> list[tuple[str, int]]:
         ("check-abi.txt", [py, str(t / "check-abi.py")]),
         ("check-sdk.txt", [py, str(t / "check-sdk.py"), "--override-sdk"]),
         ("apply-sdk-check.txt", [py, str(t / "apply-sdk.py"), "--check"]),
+        # The allocator's arithmetic, exercised on the host. Exit 2 means no
+        # host compiler was available, which is recorded rather than hidden.
+        ("host-alloc-test.txt", [py, str(t / "test-alloc-host.py")]),
     ]
     if elf.is_file():
         plan += [
