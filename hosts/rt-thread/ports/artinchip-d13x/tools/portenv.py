@@ -113,6 +113,21 @@ def sdk_commits_ahead(sha: str) -> int:
         return 0
 
 
+def port_revision() -> str:
+    """Short PocketJS revision, marked `-dirty` when the tree has modifications.
+
+    A revision is what identifies the sources a firmware was built from. Before
+    the port change is committed this reads `<parent>-dirty`, which is exactly
+    what is true: the parent revision plus local edits.
+    """
+    sha = _git(PORT_ROOT, "rev-parse", "--short", "HEAD").strip()
+    try:
+        dirty = _git(PORT_ROOT, "status", "--porcelain").strip()
+    except SystemExit:
+        dirty = ""
+    return f"{sha}-dirty" if dirty else sha
+
+
 def sdk_branch() -> str:
     """Current branch name, or a detached-HEAD description."""
     out = _git(sdk_root(), "rev-parse", "--abbrev-ref", "HEAD").strip()

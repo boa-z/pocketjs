@@ -25,6 +25,23 @@
 
 #include <rtconfig.h>
 
+/* Build identity, written next to this file by tools/apply-sdk.py. The guard
+ * keeps the SDK branch compilable on its own if the header is absent.
+ *
+ * Deliberately NOT __DATE__/__TIME__: those are per-translation-unit compile
+ * times, so an unchanged main.c keeps a stale stamp while the rest of the
+ * firmware is rebuilt. The first hardware re-run printed the *previous* build's
+ * date for exactly that reason and nearly made the evidence ambiguous. A
+ * revision names the tree that was actually built. */
+#if defined(__has_include)
+#  if __has_include("pocketjs_build.h")
+#    include "pocketjs_build.h"
+#  endif
+#endif
+#ifndef PJS_BUILD_REV
+#define PJS_BUILD_REV "unknown (apply-sdk.py not run)"
+#endif
+
 #if defined(LPKG_USING_POCKETJS)
 /* Implemented in packages/third-party/pocketjs/src/pocketjs_host.c.
  * Also wired to the `pjs_abi` MSH command. */
@@ -41,7 +58,7 @@ int main(void)
     rt_kprintf("PocketJS D13x port - Gate 0 firmware\n");
     rt_kprintf("  board    : d50t-2-lite (D133ECS, Xuantie E907FDP)\n");
     rt_kprintf("  abi      : RV32IMAFDC / ILP32D hard-float\n");
-    rt_kprintf("  built    : %s %s\n", __DATE__, __TIME__);
+    rt_kprintf("  rev      : %s\n", PJS_BUILD_REV);
 
 #if defined(LPKG_USING_POCKETJS)
     rt_kprintf("  runtime  : packages/third-party/pocketjs\n");
