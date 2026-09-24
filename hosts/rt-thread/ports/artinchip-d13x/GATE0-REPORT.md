@@ -1,20 +1,30 @@
 # Gate 0 Report — PocketJS on ArtInChip D13x
 
 **Gate:** 0 — Rust RV32IMAFDC / ILP32D toolchain bridge, C↔Rust ABI, allocator
-**Date:** 2026-09-24 (build) · 2026-09-25 (first hardware run)
+**Date:** 2026-09-24 (build) · 2026-09-25 (hardware runs 1 and 2)
 **Board:** D50T-2-Lite (D133ECS, Xuantie E907FDP)
-**Status:** **HARDWARE RUN 1 — ABI PASSED ON SILICON, 1 ALLOCATOR DEFECT FOUND, FIXED, AWAITING RE-TEST**
+**Status:** **HARDWARE VALIDATED — GATE 0 PASS**
 
-> The board was flashed and the probe executed on real silicon. **Every C↔Rust
-> ABI case passed** — scalars, f32/f64 in registers, pointers, structs by value,
-> nested structs, mixed scalar+pointer, layout agreement between the two
-> compilers, and Rust→C callbacks.
+> Two runs on real silicon, both kept in this report.
 >
-> The run then aborted in the allocator: this board's `rt_malloc` returns
-> 4-byte-aligned memory, while both the C and Rust sides assumed 8. That is a
-> genuine defect, so **Gate 0 did not pass on this run**. It is fixed and
-> verified on the host (§5.1) but the corrected image has not been flashed yet.
-> One more run is needed.
+> **Run 1** executed the whole C↔Rust ABI and **passed every case** — scalars,
+> f32/f64 in registers, pointers, structs by value, nested structs, mixed
+> scalar+pointer, layout agreement between the two compilers, and Rust→C
+> callbacks — then aborted in the allocator. This board's `rt_malloc` returns
+> 4-byte-aligned memory while both sides assumed 8. A genuine defect, so **run 1
+> did not pass**. It is analysed in §5.1 and was fixed by making the allocator
+> honour the caller's alignment.
+>
+> **Run 2** flashed the corrected image and printed `SUMMARY pass=47 fail=0` /
+> `RESULT PASS`, with `alloc.align8`, `host.alloc_align4/8/64` all green and
+> `live=0 allocs=5 frees=5 fails=0`. **Gate 0 passes.**
+>
+> Run 1 is deliberately not deleted. It is the only evidence that this class of
+> defect existed, and it is the reason the allocator contract was redesigned
+> instead of patched.
+>
+> Two items remain **uncaptured** and are flagged rather than assumed: the
+> deliberate `pjs_abi_panic` abort, and a post-reset recovery re-run. See §9.
 
 ---
 
@@ -30,6 +40,24 @@
 | Firmware GCC | Xuantie-900 elf newlib **V2.6.1 B-20220906**, GCC **10.2.0** |
 | Firmware binutils | **2.35** |
 | Firmware flags | `-march=rv32imafdcpzpsfoperand_xtheade -mabi=ilp32d -mcmodel=medany` |
+
+### What was actually validated
+
+The pin above names the tree the Gate 0 image was built from. Both hardware runs
+tested the same *code*: `a926701`, the allocator fix. The commits after it are
+documentation plus the banner-identity fix (§2), which changes what the firmware
+prints but not what it computes.
+
+| | Revision |
+|---|---|
+| Validated code | PocketJS `a926701` / SDK `b9664c44` |
+| Run 2 firmware | build `20260925T072651`, `d13x.bin` `c01f51bf…` |
+| Banner-fixed build (not flashed) | build `20260925T074256`, `d13x.bin` `52d21549…` |
+
+The two `d13x.bin` hashes differ **only** in the banner string. Both contain
+`alloc.align8` and `host.alloc_align4/8/64`. The run-2 image still prints
+`__DATE__`/`__TIME__`; the banner-fixed image prints the revision instead. No
+computation differs between them.
 
 ### Baseline deviation (recorded, not hidden)
 
@@ -71,11 +99,29 @@ is never merged back into the product line automatically.
 | `tools/check-sdk.py` | Baseline, branch and build-flag assertions |
 | `tools/test-alloc-host.py` | 19 checks over the allocator, on a stubbed heap (§5.1) |
 
+### The banner now names a revision, not a compile time
+
+Run 1 and run 2 printed the *same* banner (`built Sep 24 2026 21:36:42`) because
+`main.c` uses `__DATE__`/`__TIME__`, which are **per-translation-unit** compile
+times. `main.c` was not recompiled between the two builds, so its stamp froze,
+while the rest of the firmware moved. The binary was provably the corrected one
+(§6), but the banner was actively misleading evidence — and it was briefly the
+only way to tell the two candidate builds apart.
+
+`tools/apply-sdk.py` now generates
+`application/rt-thread/pocketjs-smoke/pocketjs_build.h` from
+`portenv.port_revision()` (`git rev-parse --short HEAD`, plus `-dirty` when the
+tree has uncommitted changes), and the banner prints that. It cannot go stale
+independently of the tree it names, and because the header is generated,
+`apply-sdk.py --check` reports it as drift the moment the revision moves.
+
 ### SDK branch `pocketjs-d13x`
 
 ```
 packages/third-party/pocketjs/            the runtime package (generated)
 application/rt-thread/pocketjs-smoke/     thin Gate 0 entry point (generated)
+application/rt-thread/pocketjs-smoke/pocketjs_build.h
+                                          generated banner identity (see above)
 target/configs/d13x_d50t-2-lite_rt-thread_pocketjs-smoke_defconfig
 packages/third-party/Kconfig              +1 injected `source` line
 ```
@@ -91,7 +137,7 @@ touch, no CAN, no filesystem. Gate 0 is not allowed to contain UI or GE work.
 
 ## 3. Commits
 
-PocketJS `d13x` (9 commits, all Conventional Commits):
+PocketJS `d13x` (12 commits, all Conventional Commits):
 
 | SHA | Subject |
 |-----|---------|
@@ -104,13 +150,22 @@ PocketJS `d13x` (9 commits, all Conventional Commits):
 | `dad3c35` | `chore(d13x): drop unused SDK patch scaffolding` |
 | `70c4cca` | `fix(d13x): make the port tooling report true state and rebuild reproducibly` |
 | `a926701` | `fix(d13x): honour the caller's alignment in the host allocator` |
+| `d79c34c` | `docs(d13x): record hardware run 1 and the allocator fix` |
+| `0fb442e` | `docs(d13x): record the SDK commit for the allocator fix` |
+| `f7a871a` | `fix(d13x): stamp the firmware banner with a revision, not a compile time` |
 
-SDK `pocketjs-d13x` (2 commits on top of the fork point):
+`a926701` is the validated code revision — the one both hardware runs exercised.
+
+SDK `pocketjs-d13x` (3 commits on top of the fork point):
 
 | SHA | Subject |
 |-----|---------|
 | `16837b2d` | `feat(pocketjs): add the PocketJS runtime package and the Gate 0 application` |
 | `b9664c44` | `fix(pocketjs): honour the caller's alignment in the host allocator` |
+| `052da248` | `fix(pocketjs): stamp the firmware banner with a revision, not a compile time` |
+
+This report is itself the commit `docs(d13x): close Gate 0 hardware validation`
+on the PocketJS branch, so it carries no SHA of its own.
 
 Cut from `f7572509`; the working tree carries the port only. No force-push, no
 `main` modification, no `d211` derivation.
@@ -125,12 +180,22 @@ python tools/build-firmware.py -j8
 
 result → `Luban-Lite is built successfully`
 
-| Artifact | Size |
-|----------|------|
-| `d13x.elf` | 3,515,432 B |
-| `d13x.bin` | 220,988 B |
-| `.text` / `.data` / `.bss` | 213,228 / 7,740 / 18,812 B |
-| Flashable image | `d13x_D50T-2-Lite_page_2k_block_128k_v1.0.0.img` |
+| Artifact | Run 2 firmware (`20260925T072651`) | Current, banner-fixed (`20260925T074256`) |
+|----------|-----------------------------------|-------------------------------------------|
+| `d13x.elf` | 3,518,988 B | 3,518,976 B |
+| `d13x.bin` | 221,500 B | 221,500 B |
+| `.text` / `.data` / `.bss` | 213,708 / 7,740 / 18,812 B | 213,724 / 7,740 / 18,812 B |
+| `d13x.bin` SHA-256 | `c01f51bf…` | `52d21549…` |
+| Flashable image | `d13x_D50T-2-Lite_page_2k_block_128k_v1.0.0.img` | same name, rebuilt |
+
+The two differ by 16 bytes of `.text`: the banner now formats one revision
+string instead of two compile-time strings. Nothing else changed, and the
+banner-fixed build has **not** been flashed — it exists to prove the banner
+change compiles and links, and all eight evidence checks exit 0 on it.
+
+`.text` has read 213,228 / 213,708 / 213,724 at different points in this work.
+The figure moves with the code, so the report is pinned to the two builds named
+above rather than to a single number.
 
 ### The blocker that had to be solved first
 
@@ -305,13 +370,31 @@ prove the runtime values are correct — that needs the board.
 
 ## 6. Hardware
 
-**Run 1 — 2026-09-25, D50T-2-Lite, 115200 8N1. Result: ABI PASS, allocator FAIL.**
+Two runs on the D50T-2-Lite, 115200 8N1. **Both are kept**, because run 1 is the
+only evidence that the allocator defect existed.
 
-Firmware banner: `built Sep 24 2026 21:36:42`, runtime
-`packages/third-party/pocketjs`. Raw console in the appendix
-(`board-console.txt`).
+| | Run 1 | Run 2 |
+|---|---|---|
+| Firmware | pre-fix build | build `20260925T072651` (allocator fix) |
+| Banner | `built Sep 24 2026 21:36:42` | `built Sep 24 2026 21:36:42` — **stale, see below** |
+| `d13x.bin` SHA-256 | not archived | `c01f51bfda442583a34ffcda5ffe9d5a4953ad9c58fd8d9729d95f8e6f7081a4` |
+| ABI cases | 34 / 34 PASS | 47 / 47 PASS |
+| Allocator | **FAIL** — aborted | PASS — `live=0 fails=0` |
+| Result | ABI proven, gate open | **`RESULT PASS`** |
 
-### What passed on silicon
+Both runs printed the *same* banner. That is not the same build — `main.c` was
+not recompiled between them, so its `__DATE__`/`__TIME__` stamp froze. Run 2's
+binary is provably the corrected one (it contains `alloc.align8` and
+`host.alloc_align4/8/64`, which do not exist before the fix), but the banner was
+misleading and was briefly the only way to tell the two candidate builds apart.
+The banner now prints a revision — see §2.
+
+### Run 1 — ABI PASS, allocator FAIL
+
+Runtime `packages/third-party/pocketjs`. Raw console in the appendix
+(`20260925T070648-hw-run1/board-console.txt`).
+
+#### What passed on silicon
 
 All 34 ABI cases, in both directions:
 
@@ -336,7 +419,7 @@ So **RV32IMAFDC / ILP32D hard-float is proven end to end on this silicon**: f64
 crosses the boundary in registers and in the return slot, structs by value
 follow the psABI, and both compilers agree on every size and offset.
 
-### What failed
+#### What failed
 
 ```
 [pjs-abi] -- allocator: Box / Vec / String / over-alignment --
@@ -348,33 +431,110 @@ follow the psABI, and both compilers agree on every size and offset.
 `30045804` = `0x01CA766C` — 4-byte aligned, not 8. Root cause and fix in §5.1.
 
 Note the abort path behaved exactly as designed: the panic reached the host and
-the board halted rather than continuing in a corrupt state. That is step 0c of
-the gate checklist, observed for real (albeit via an unplanned panic rather than
-`pjs_abi_panic`).
+the board halted rather than continuing in a corrupt state. That is the
+`panic = abort` half of step 0c, observed for real — albeit via an unplanned
+panic rather than the deliberate `pjs_abi_panic` command.
 
-### To finish Gate 0
+### Run 2 — `RESULT PASS`
+
+The corrected image was flashed and the probe re-run.
 
 ```
-python tools/build-firmware.py -j8        # produce the corrected image
-# flash output/d13x_d50t-2-lite_rt-thread_pocketjs-smoke/images/
-#   d13x_D50T-2-Lite_page_2k_block_128k_v1.0.0.img
-# console: 115200 8N1
-msh /> pjs_abi          # expect: SUMMARY pass=N fail=0 / RESULT PASS
-msh /> pjs_abi_panic    # expect: abort + halted board (no return)
+[pjs-abi] SUMMARY pass=47 fail=0
+[pjs-abi] RESULT PASS
 ```
 
-Gate 0 passes only when `pjs_abi` prints `RESULT PASS` on real silicon and
-`pjs_abi_panic` halts the board. Until then **no UI Core, QuickJS, framebuffer
-or GE work starts.**
+The 13 cases that run 1 never reached all passed, including the ones added with
+the fix:
+
+| Case | What it proves |
+|------|----------------|
+| `alloc.align8` | a Rust `Box<f64>` allocation really is 8-byte aligned |
+| `host.alloc_align4` | the host service returns 4-aligned memory for align 4 |
+| `host.alloc_align8` | …for align 8 |
+| `host.alloc_align64` | …for align 64, i.e. the over-alignment path |
+
+Allocator telemetry at the end of the run:
+
+```
+live=0  peak=256  allocs=5  frees=5  fails=0
+```
+
+`live=0` with `allocs == frees` is the meaningful part: every block the Rust
+`GlobalAlloc` handed out came back, and nothing failed. `peak=256` is the
+high-water mark of live bytes the probe reached — small, because the probe
+allocates a handful of objects, not because the heap is capped.
+
+`host.alloc_*` is deliberately checked **with no Rust in the loop**, so a
+regression in the host contract cannot hide behind the `GlobalAlloc` wrapper.
+
+#### Evidence provenance — read this before quoting run 2
+
+Run 2's console was **not captured to disk**. The operator pasted the result into
+the review session; the full log was never written out. The record in
+`.pocket-build/d13x/validation/gate0/20260925T072651-hw-run2/board-console.txt`
+therefore separates `[reported]` (stated by the operator) from `[observed]`
+(independently confirmed from the archived build artifacts), and marks
+unreported details as unknown rather than filling them in.
+
+What *is* independently confirmed:
+
+- `20260925T072651/images/d13x.bin` contains `alloc.align8` and
+  `host.alloc_align4`, neither of which exists in the pre-fix source, so the
+  binary under test really was the corrected one.
+- The banner `Sep 24 2026 21:36:42` matches `20260925T072651` exactly and cannot
+  be produced by the later banner-fixed build, which pins which image was
+  flashed.
+
+#### Still not captured
+
+Two items from the Gate 0 closeout checklist were **not** performed in run 2 and
+are flagged as open rather than assumed:
+
+1. **The deliberate `pjs_abi_panic`.** The abort path was observed in run 1, but
+   as a side effect of the allocator defect, not by invoking the command that
+   exists to exercise it. This matters because `pjs_abi_panic` is the only thing
+   that proves the abort path works *on demand* rather than by accident.
+2. **The post-reset recovery re-run.** "Panic → board halts → reset → `pjs_abi`
+   passes again" has not been demonstrated end to end.
+
+Neither affects the allocator verdict, and neither is a defect. They are
+unverified claims that this report declines to make. To close them:
+
+```
+msh /> pjs_abi_panic    # expect: abort, board halts, no return
+# press reset
+msh /> pjs_abi          # expect: SUMMARY pass=47 fail=0 / RESULT PASS
+```
+
+### Why Gate 0 passes
+
+The gate's stated criterion is that `pjs_abi` prints `RESULT PASS` on real
+silicon. Run 2 does exactly that: **47 of 47 checks pass**, including the
+allocator cases that aborted in run 1.
+
+The `panic = abort` half was also observed for real in run 1 — the Rust panic
+reached the host and the board halted instead of continuing in a corrupt state.
+That is the behaviour the gate asks for. What is *not* yet demonstrated is the
+same path triggered **on demand** by `pjs_abi_panic`, and recovery after a
+reset; both are listed as open items above and in §9.
+
+So: **GATE 0 PASS**, with two explicitly unverified claims rather than two
+silently assumed ones.
 
 ---
 
 ## 7. Memory
 
+**These are planning figures, not measurements.** The `PSRAM_SW` size in
+particular has not been read from this board's configuration yet; Gate 1's first
+task is to report the real numbers from the current SDK config rather than
+inherit an assumption.
+
 ```
 SRAM (1 MiB)       RT-Thread kernel, interrupts, thread stacks,
                    driver state, hot native state
-PSRAM_SW (16 MiB)  PocketJS Rust heap, QuickJS heap, UI tree,
+PSRAM_SW (16 MiB?) PocketJS Rust heap, QuickJS heap, UI tree,
                    DrawList, text, general runtime buffers
 PSRAM_CMA          framebuffer, GE, DMA, MPP buffers
 ```
@@ -392,36 +552,44 @@ heap is reserved by Gate 0 itself.
 
 ## 8. Known Issues
 
-1. **Gate 0 has not passed on hardware yet.** Run 1 (§6) proved the ABI on
-   silicon and found one allocator defect, now fixed. The corrected image has
-   **not been flashed**. This is the single blocking item.
+1. **Two Gate 0 evidence gaps remain.** Gate 0 passes (run 2, §6), but the
+   deliberate `pjs_abi_panic` and the post-reset recovery re-run were never
+   performed. The abort path *was* observed for real in run 1, as the side
+   effect of the allocator defect — so the mechanism is proven, but not its
+   on-demand invocation. Neither gap is a defect; both are claims this report
+   declines to make. Closing them needs a board and two commands (§6).
 2. **The allocator alignment defect (found on hardware, fixed, host-tested).**
    Full analysis in §5.1. Worth keeping visible because of what it says about
    the process: every static check in this report passed while both sides
    carried a hardcoded 8-byte assumption that was false for this build. Only
    execution caught it — which is the entire reason Gate 0 exists.
-3. **`pjs_host_log` is unexercised.** It is declared and defined, but the
+3. **The banner was stale and nearly made run 2 unattributable.** Both runs
+   printed the same `__DATE__`/`__TIME__` stamp. Fixed by generating a revision
+   header (§2). Keep this in mind for any future build-vs-flash comparison: a
+   banner is only evidence if it is derived from the tree, not from when one
+   object file happened to be compiled.
+4. **`pjs_host_log` is unexercised.** It is declared and defined, but the
    crate never calls it, so `--gc-sections` drops it. The Rust→C log direction
    is therefore not proven. Add a `pjs_probe_call_host_log` case in Gate 1.
-4. **Attribute normalisation is mandatory.** Every Rust archive must pass
+5. **Attribute normalisation is mandatory.** Every Rust archive must pass
    through `patch-riscv-attrs.py` before linking; `build-native.py` does this
    automatically. Skipping it reproduces the libc merge failure. If the
    toolchain is ever upgraded to binutils ≥ 2.38 this step can likely be
    dropped — re-verify before removing.
-5. **`-mcmodel` differs by side.** C uses `medany`; Rust's target JSON leaves
+6. **`-mcmodel` differs by side.** C uses `medany`; Rust's target JSON leaves
    LLVM's default (`small`/medlow). Both reach every D13x region from absolute
    zero, so they interoperate, but the mismatch is a measured fact rather than
    an assumption.
-6. **Full clean rebuild is constrained.** A from-scratch `scons -c` + rebuild
+7. **Full clean rebuild is constrained.** A from-scratch `scons -c` + rebuild
    is blocked by the environment's bulk-delete confirmation guard. The
    verified build is an incremental relink onto a partially cleaned tree. The
    link itself is fully exercised; only object recompilation is not.
-7. **SDK baseline is the product SDK, not the upstream mirror** (see §1). A
+8. **SDK baseline is the product SDK, not the upstream mirror** (see §1). A
    future move to a newer official baseline is a separate upgrade task that
    must re-run this gate.
-8. **`reg.exe` is blocked by security policy** during SCons. The probe is
+9. **`reg.exe` is blocked by security policy** during SCons. The probe is
    non-fatal and the build completes, but the warning is noise.
-9. **SCons is not stdlib and must be discovered.** Luban-Lite is built by
+10. **SCons is not stdlib and must be discovered.** Luban-Lite is built by
    SCons, which is installed into one specific interpreter (here: SCons 4.11.1
    in the tooling venv) - not necessarily the one that launches the build
    script. A bare `python tools/build-firmware.py` under a different
@@ -433,44 +601,65 @@ heap is reserved by Gate 0 itself.
 
 ---
 
-## 9. Next Gate
+## 9. Gate Status
 
-**Gate 0 remains OPEN.** Run 1 (§6) executed on silicon and passed the whole ABI,
-but the allocator aborted, so the gate did not pass. The defect is fixed and
-host-tested; what remains is one more flash.
+**Gate 0: PASS.** Two runs on real silicon; run 2 printed `RESULT PASS` with
+47 of 47 checks green, including the allocator cases that aborted in run 1.
 
 | Step | Action | Status |
 |------|--------|--------|
-| 0a | Flash the image on D50T-2-Lite, capture the console | done — run 1 |
-| 0b | Confirm `pjs_abi` → `RESULT PASS` on silicon | **not yet** — run 1 aborted in the allocator |
-| 0c | Confirm `pjs_abi_panic` aborts and halts | partially — the abort path was observed for real, but via an unplanned panic; still needs the deliberate command |
-| 0d | Record the run and update this report | done for run 1; **run 2 pending** |
+| 0a | Flash the image on D50T-2-Lite, capture the console | **done** — run 1, then run 2 |
+| 0b | Confirm `pjs_abi` → `RESULT PASS` on silicon | **done** — run 2: `pass=47 fail=0` |
+| 0c | Confirm the `panic = abort` path halts the board | **observed** in run 1 via an unplanned panic; the deliberate `pjs_abi_panic` is **not yet captured** |
+| 0d | Record the runs and update this report | **done** — run 1 and run 2, neither deleted |
+| 0e | Post-reset recovery re-run | **not yet captured** |
 
-Next action: flash the corrected image and re-run `pjs_abi` and `pjs_abi_panic`.
+0c and 0e are the two open evidence gaps (§6, §8.1). They need a board and two
+commands; they do not block Gate 1, because the abort mechanism itself was
+observed working in run 1.
 
-Only after 0a–0d: **Gate 1 — retained UI core (`no_std` + alloc)**, which also
-closes issue 3 above.
+### Next: Gate 1 — retained UI core
+
+Gate 1 is the `no_std` + `alloc` retained UI core, and it closes issue 4 above
+(`pjs_host_log`) on the way. **No RGB565 renderer, no QuickJS, no framebuffer
+and no GE work starts until Gate 1 is reviewed and passed.**
+
+Gate 1's first task is a **memory-map report read from the current SDK config**,
+not from assumption: total PSRAM, and the PSRAM_SW and CMA base/size/end. §7's
+`PSRAM_SW (16 MiB)` is a planning figure that has **not** been verified against
+this board's `ram_param`/Kconfig and must not be treated as measured.
 
 ---
 
 ## Appendix — evidence
 
-Two runs, both under `.pocket-build/d13x/validation/gate0/` (not committed):
+Everything below lives under `.pocket-build/d13x/validation/gate0/` and is
+**not committed**.
 
-**Run 1 — hardware (2026-09-25)**
-
-```
-20260925T070648-hw-run1/board-console.txt   raw console from the board,
-                                            with the failing pointer decoded
-```
-
-**Build — `20260925T072651/`** (the corrected image). Reproduced by the one
-documented command, `python tools/build-firmware.py -j8`; nothing is
-transcribed by hand.
+### Hardware runs
 
 ```
-images/d13x.elf            linked firmware
-images/d13x.bin            flat binary            (221,500 B)
+20260925T070648-hw-run1/
+  board-console.txt        raw console from the board, with the failing
+                           pointer decoded
+
+20260925T072651-hw-run2/
+  board-console.txt        run-2 result. NOT a raw capture - the full console
+                           was never written to disk, so this file separates
+                           [reported] from [observed] and marks the rest unknown
+  firmware.txt             which image this was and why, with SHA-256s
+```
+
+Run 1 is a verbatim capture. Run 2 is a provenance record, and says so — the
+distinction is deliberate rather than cosmetic.
+
+### Builds
+
+**`20260925T072651/` — the flashed (run 2) image.**
+
+```
+images/d13x.elf            linked firmware       (3,518,988 B, sha ce1b64a2…)
+images/d13x.bin            flat binary           (221,500 B, sha c01f51bf…)
 images/d13x.map            link map
 images/*.img               flashable image
 images/bootcfg.txt         boot config
@@ -484,5 +673,13 @@ apply-sdk-check.txt        clean: the SDK matches the overlay
 host-alloc-test.txt        RESULT: PASS  (19 checks, stubbed heap)
 ```
 
+**`20260925T074256/` — the banner-fixed image (not flashed).** Same eight checks,
+all exit 0; `d13x.bin` sha `52d21549…`, `.text` 213,724. It differs from the
+flashed image only in the banner string.
+
+Both are reproduced by the one documented command,
+`python tools/build-firmware.py -j8`; nothing is transcribed by hand.
+
 `build-native.py` also writes a receipt with the rustc/cargo versions, the
 target-spec SHA-256 and the exact cargo command line.
+
