@@ -280,7 +280,6 @@ ports/artinchip-d13x/                    (PocketJS repo - development home)
 │                              patch-riscv-attrs.py, check-abi.py,
 │                              check-sdk.py, portenv.py
 ├── sdk/
-│   ├── patches/               git patches against the pinned SDK
 │   └── overlay/               files copied into the SDK tree
 └── versions.toml              machine-readable pin
 ```
