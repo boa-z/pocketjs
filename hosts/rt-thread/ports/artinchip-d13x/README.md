@@ -254,7 +254,7 @@ that seam at `aic_memheap_malloc(MEM_PSRAM_SW)` without touching the Rust side.
 
 | Gate | Scope | Status |
 |------|-------|--------|
-| 0 | Rust ILP32D toolchain bridge, ABI, allocator | see Gate 0 report |
+| 0 | Rust ILP32D toolchain bridge, ABI, allocator | **build-validated, NOT hardware-validated** - see [GATE0-REPORT.md](GATE0-REPORT.md) |
 | 1 | Retained UI core (`no_std` + alloc) | not started |
 | 2 | RGB565 software renderer -> AIC framebuffer | not started |
 | 3 | QuickJS-ng guest | not started |
@@ -262,6 +262,9 @@ that seam at `aic_memheap_malloc(MEM_PSRAM_SW)` without touching the Rust side.
 | 5 | `.pocket` package | not started |
 | 6 | Touch input | not started |
 | 7 | GE acceleration | not started |
+
+Gate 0 has **not** run on silicon. Until it does, the runtime stays a
+conformance probe: no UI core, no QuickJS, no framebuffer, no GE.
 
 ## Directory map
 

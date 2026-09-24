@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the ArtInChip Luban-Lite checkout matches the validated baseline.
+"""Verify the Luban-Lite checkout matches the validated baseline.
 
 The point (spec section 39): if the SDK silently differs from the baseline that
 Gate 0 was proven against, every downstream result is void. So a mismatch is an
@@ -9,8 +9,10 @@ error by default, not a warning.
     python tools/check-sdk.py --override-sdk  # proceed anyway, but say so loudly
 
 Checks:
-  * git HEAD equals versions.toml [luban_lite].commit
-  * working tree is clean (uncommitted SDK edits must be captured as patches)
+  * git branch is versions.toml [luban_lite].port_branch
+  * git HEAD equals versions.toml [luban_lite].base_commit
+  * every uncommitted change is confined to the port's own paths - the product
+    line must not be carrying stray edits
   * CPUNAME / -march / -mabi / -mcmodel read from d13x/rtconfig.py
   * the memheap API the allocator will bind to exists
   * the MPP framebuffer API the renderer will bind to exists
@@ -38,6 +40,15 @@ MEMHEAP_REGIONS = ("MEM_PSRAM_SW", "MEM_CMA")
 MPP_SYMBOLS = ("mpp_fb_open", "AICFB_GET_SCREENINFO")
 
 SEARCH_GLOBS = ("*.h", "*.c")
+
+# Everything the port is allowed to touch on its branch. Anything else showing
+# up as modified means the product line is drifting under the port's feet.
+PORT_PATHS = (
+    "application/rt-thread/pocketjs-smoke/",
+    "packages/third-party/pocketjs/",
+    "target/configs/d13x_d50t-2-lite_rt-thread_pocketjs-smoke_defconfig",
+    "packages/third-party/Kconfig",
+)
 
 
 def check(cond: bool, label: str, detail: str = "") -> bool:
@@ -68,6 +79,32 @@ def grep_first(root: Path, needle: str) -> tuple[Path, int, str] | None:
     return None
 
 
+def squash_concatenations(text: str) -> str:
+    """Fold Python string concatenation so flag literals become searchable.
+
+    rtconfig.py builds the ISA flag rather than spelling it out:
+
+        DEVICE = ' -march=rv32imafdcpzpsfoperand' + ISA_TAG + '_xtheade -mabi=ilp32d'
+
+    A literal substring search for the assembled flag therefore fails even
+    though the SDK really does compile with it. Removing quotes and `+` (and
+    resolving ISA_TAG, which is empty for the V2.6.1 toolchain) recovers the
+    assembled form.
+    """
+    out = re.sub(r"['\"]\s*\+\s*", "", text)
+    out = re.sub(r"\s*\+\s*['\"]", "", out)
+    return out.replace("ISA_TAG", "")
+
+
+def find_flag(text: str, squashed: str, needle: str) -> str | None:
+    """Line containing `needle`, preferring the squashed (assembled) view."""
+    for blob in (squashed, text):
+        for line in blob.splitlines():
+            if needle in line:
+                return line.strip()
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--override-sdk", action="store_true",
@@ -75,18 +112,24 @@ def main() -> int:
     args = ap.parse_args()
 
     pin = load_pin()
-    expected_sha = pin["luban_lite"]["commit"]
+    expected_sha = pin["luban_lite"]["base_commit"]
+    want_branch = pin["luban_lite"]["port_branch"]
     root = pe.sdk_root()
 
     print(f"sdk root: {root}")
-    print(f"pinned  : {expected_sha}")
+    print(f"pinned  : {expected_sha}  (branch {want_branch})")
     print()
 
     # --- identity ---------------------------------------------------------
+    branch = pe.sdk_branch()
+    check(branch == want_branch,
+          f"SDK is on the port branch '{want_branch}'",
+          f"on '{branch}' - port work must not land on the product line")
+
     actual_sha = pe.sdk_head_sha()
-    print(f"actual  : {actual_sha}")
+    print(f"actual  : {actual_sha}  (branch {branch})")
     if not check(actual_sha == expected_sha,
-                 "SDK HEAD matches versions.toml pin",
+                 "SDK HEAD matches versions.toml base_commit",
                  f"expected {expected_sha}, got {actual_sha}"):
         if not args.override_sdk:
             print()
@@ -98,20 +141,27 @@ def main() -> int:
             return 1
         WARNINGS.append("SDK SHA mismatch accepted via --override-sdk")
 
-    dirty = pe.sdk_is_dirty()
-    if dirty and not args.override_sdk:
-        check(False, "SDK working tree is clean",
-              "uncommitted SDK edits must be captured as patches/overlay")
-        print()
-        print("Refusing to continue: the SDK has uncommitted changes.")
-        print("Regenerate sdk/patches + sdk/overlay, or re-run with --override-sdk.")
-        print()
-        print(f"RESULT: FAIL ({len(FAILURES)} check(s) failed)")
-        return 1
-    if dirty:
-        WARNINGS.append("SDK working tree is dirty (accepted via --override-sdk)")
+    # The port branch is expected to differ from base_commit - that is the whole
+    # point of it. What must not happen is a change outside the port's own paths.
+    entries = pe.sdk_dirty_entries()
+    stray = [
+        e for e in entries
+        if not any(e[3:].strip().strip('"').startswith(p) for p in PORT_PATHS)
+    ]
+    if stray:
+        if args.override_sdk:
+            WARNINGS.append(
+                f"{len(stray)} change(s) outside the port's paths, accepted via "
+                f"--override-sdk: {stray[:3]}")
+            print(f"WARN: {len(stray)} change(s) outside the port's paths:")
+            for e in stray[:5]:
+                print(f"       {e}")
+        else:
+            check(False, "all SDK changes are confined to the port's paths",
+                  f"{len(stray)} stray change(s): {stray[:3]}")
     else:
-        pe.ok("SDK working tree is clean")
+        pe.ok("all SDK changes are confined to the port's paths")
+        print(f"       ({len(entries)} tracked change(s), all within the port)")
 
     # --- build flags ------------------------------------------------------
     rtconfig = root / "bsp" / "artinchip" / "sys" / "d13x" / "rtconfig.py"
@@ -121,24 +171,23 @@ def main() -> int:
         return 1
 
     text = rtconfig.read_text(encoding="utf-8", errors="ignore")
+    squashed = squash_concatenations(text)
 
     m = re.search(r"CPUNAME\s*=\s*'([^']+)'", text)
     cpu = m.group(1) if m else "(not found)"
     check(cpu == pin["target"]["cpu"], f"CPUNAME is {pin['target']['cpu']}", f"got {cpu}")
 
-    for key, needle in (("march", "rv32imafdc"), ("mabi", "ilp32d"), ("mcmodel", "medlow")):
+    for key in ("march", "mabi", "mcmodel"):
         want = pin["firmware_flags"][key]
-        present = want in text
-        check(present, f"rtconfig.py contains {key}={want}", "not found in rtconfig.py")
-        if present:
-            for line in text.splitlines():
-                if want in line:
-                    print(f"       {line.strip()[:110]}")
-                    break
+        line = find_flag(text, squashed, want)
+        check(line is not None, f"rtconfig.py contains {key}={want}",
+              "not found in rtconfig.py")
+        if line:
+            print(f"       {line[:110]}")
 
     # The SDK's own module build uses the plain rv32imafdc/ilp32d subset - the
     # precedent that makes the Rust target's ISA choice legitimate.
-    check(pin["firmware_flags"]["m_device_march"] in text,
+    check(pin["firmware_flags"]["m_device_march"] in squashed,
           "SDK itself uses the plain rv32imafdc subset (M_DEVICE)")
 
     # --- memory API -------------------------------------------------------
