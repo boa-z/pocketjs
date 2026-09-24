@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# GENERATED FILE - do not edit inside the SDK tree.
+# Source of truth: hosts/rt-thread/ports/artinchip-d13x/sdk/overlay/
+# Regenerate with: python tools/apply-sdk.py
+#
+# PocketJS on ArtInChip D13x / Luban-Lite.
+#
+# Gate 0 scope: this package currently ships the C/Rust ABI conformance probe
+# only. The UI Core, the QuickJS engine and the renderer land here in later
+# gates, once the RV32IMAFDC/ILP32D ABI is proven on real D133ECS silicon.
+
+menuconfig LPKG_USING_POCKETJS
+    bool "PocketJS (JavaScript runtime for ArtInChip D13x)"
+    default n
+    help
+      Builds the PocketJS runtime for the ArtInChip D13x (Xuantie E907FDP,
+      RV32IMAFDC / ILP32D hard-float).
+
+      The Rust half is delivered as a prebuilt staticlib,
+      libpocketjs_abi_probe.a, which is deliberately NOT committed. Produce it
+      from the PocketJS repository before building:
+
+        python hosts/rt-thread/ports/artinchip-d13x/tools/build-firmware.py
+
+      If the archive is absent the SConscript fails with instructions rather
+      than silently linking a firmware without a runtime.
+
+if LPKG_USING_POCKETJS
+
+config LPKG_POCKETJS_ABI_PROBE
+    bool "Expose the pjs_abi / pjs_abi_panic MSH commands"
+    default y
+    help
+      Registers the Gate 0 conformance probe at the MSH prompt. Turning this
+      off builds the runtime without the probe, which is what a shipping
+      configuration eventually wants.
+
+config LPKG_POCKETJS_AUTORUN
+    bool "Run the ABI probe once at boot"
+    default y
+    help
+      Makes the Gate 0 evidence appear on the console without an operator at
+      the prompt. Useful on bring-up hardware with no interactive terminal.
+
+endif

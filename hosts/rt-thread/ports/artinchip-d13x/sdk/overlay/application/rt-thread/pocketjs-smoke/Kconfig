@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# GENERATED FILE - do not edit inside the SDK tree.
+# Source of truth: hosts/rt-thread/ports/artinchip-d13x/sdk/overlay/
+# Regenerate with: python tools/apply-sdk.py
+#
+# Gate 0 application. It exists only to prove that a Rust RV32IMAFDC/ILP32D
+# staticlib links into official Luban-Lite firmware and agrees with the C
+# compiler on the psABI. It deliberately contains no UI, no QuickJS and no GE.
+#
+# The runtime itself lives in packages/third-party/pocketjs; this app is the
+# entry point that drives it.
+
+config AIC_POCKETJS_SMOKE_APP
+    bool "Build the PocketJS Gate 0 C/Rust ABI conformance application"
+    default n
+    select LPKG_USING_POCKETJS
+    help
+      Builds application/rt-thread/pocketjs-smoke, which drives the ABI
+      conformance probe exposed by packages/third-party/pocketjs.
+
+      Selecting this implies LPKG_USING_POCKETJS. The Rust staticlib is not
+      committed, so build it first with
+      hosts/rt-thread/ports/artinchip-d13x/tools/build-firmware.py.

@@ -62,6 +62,29 @@ def artifact(profile: str) -> Path:
     return pe.rust_target_dir() / "d13x-e907-ilp32d" / profile / "libpocketjs_abi_probe.a"
 
 
+def patch_attributes(profile: str) -> int:
+    """Remove the LLVM/binutils RISC-V attribute dialect clash.
+
+    LLVM 20 writes a `Tag_RISCV_arch` string using the modern extension names
+    (`zmmul`, `zaamo`, `zalrsc`, `zca`, ...). The Xuantie toolchain ships
+    binutils 2.35, which cannot parse them, so the link dies with "failed to
+    merge target specific data" once per libc member. See
+    patch-riscv-attrs.py for the full explanation and for what is preserved.
+
+    Runs on every build because cargo rewrites the archive whenever the crate
+    changes, which would otherwise silently reintroduce the clash.
+    """
+    art = artifact(profile)
+    if not art.is_file():
+        print(f"cannot patch: {art} is missing", file=sys.stderr)
+        return 1
+    proc = subprocess.run(
+        [sys.executable, str(pe.TOOLS_DIR / "patch-riscv-attrs.py"), "--archive", str(art)],
+        cwd=str(pe.PORT_ROOT), text=True,
+    )
+    return proc.returncode
+
+
 def write_receipt(path: Path, profile: str, cmd: list[str], rc: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     art = artifact(profile)
@@ -107,6 +130,8 @@ def main() -> int:
         default=None,
         help="write a build receipt (default: .pocket-build/validation/d13x/gate0/<run>/native-build.txt)",
     )
+    ap.add_argument("--no-patch-attrs", action="store_true",
+                    help="skip the RISC-V attribute normalisation (the link will fail)")
     args = ap.parse_args()
 
     started = time.time()
@@ -115,7 +140,14 @@ def main() -> int:
 
     art = artifact(profile)
     print()
-    print(f"exit: {rc}  elapsed: {elapsed:.1f}s")
+    print(f"exit: {rc}  elapsed: {elapsed:.1f}s", flush=True)
+
+    if rc == 0 and not args.no_patch_attrs:
+        rc = patch_attributes(profile)
+        if rc != 0:
+            print("FAIL: attribute normalisation failed", file=sys.stderr)
+
+    # Reported after patching so the size is the one that actually gets staged.
     if art.is_file():
         print(f"artifact: {art}  ({art.stat().st_size} bytes)")
     else:

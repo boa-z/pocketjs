@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# GENERATED FILE - do not edit inside the SDK tree.
+# Source of truth: hosts/rt-thread/ports/artinchip-d13x/sdk/overlay/
+# Regenerate with: python tools/apply-sdk.py
+#
+# Gate 0 application entry point.
+#
+# This is deliberately a thin wrapper: the runtime lives in the
+# packages/third-party/pocketjs package, and this app only decides when to run
+# the conformance probe. Keeping them separate is what lets the eventual
+# PocketJS application replace this file without touching the runtime package.
+
+from building import *
+
+cwd = GetCurrentDir()
+
+group = DefineGroup(
+    'PocketJS-Smoke',
+    Glob('*.c'),
+    depend=['AIC_POCKETJS_SMOKE_APP'],
+    CPPPATH=[cwd],
+)
+
+Return('group')

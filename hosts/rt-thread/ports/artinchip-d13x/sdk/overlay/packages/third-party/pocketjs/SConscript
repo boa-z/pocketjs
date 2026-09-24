@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# GENERATED FILE - do not edit inside the SDK tree.
+# Source of truth: hosts/rt-thread/ports/artinchip-d13x/sdk/overlay/
+# Regenerate with: python tools/apply-sdk.py
+#
+# PocketJS package build.
+#
+# Layout:
+#   include/pocketjs_d13x.h   the C <-> Rust ABI contract (mirrored by the crate)
+#   src/pocketjs_host.c       host services Rust calls back into + MSH commands
+#   rust/                     the crate, so the package is rebuildable in place
+#   lib/                      drop-box for libpocketjs_abi_probe.a (git-ignored)
+#
+# The Rust archive is appended via DefineGroup(LIBS=..., LIBPATH=...) rather
+# than listed as a source, because the two halves call each other in both
+# directions (C calls pjs_probe_*, Rust calls pjs_host_*). Putting the archive
+# at the end of the link line is what lets the linker resolve that cycle
+# without a --start-group wrapper.
+
+from building import *
+import os
+import SCons.Errors
+
+cwd = GetCurrentDir()
+
+LIB_NAME = 'pocketjs_abi_probe'
+LIB_DIR = os.path.join(cwd, 'lib')
+LIB_FILE = os.path.join(LIB_DIR, 'lib' + LIB_NAME + '.a')
+
+if GetDepend('LPKG_USING_POCKETJS'):
+    if not os.path.isfile(LIB_FILE):
+        raise SCons.Errors.UserError(
+            '\n'
+            'PocketJS: the Rust staticlib is missing.\n'
+            '  expected: ' + LIB_FILE + '\n'
+            '\n'
+            'The archive is a build artifact and must never be committed, so a\n'
+            'clean checkout does not have it. Produce it, then rebuild:\n'
+            '\n'
+            '  python hosts/rt-thread/ports/artinchip-d13x/tools/build-firmware.py\n'
+            '\n'
+            'That script builds the crate, stages the .a here, applies the\n'
+            'defconfig and runs the SCons build.\n'
+        )
+
+group = DefineGroup(
+    'pocketjs',
+    Glob('src/*.c'),
+    depend=['LPKG_USING_POCKETJS'],
+    CPPPATH=[os.path.join(cwd, 'include'), os.path.join(cwd, 'src')],
+    LIBS=[LIB_NAME],
+    LIBPATH=[LIB_DIR],
+)
+
+Return('group')
