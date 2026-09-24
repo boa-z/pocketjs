@@ -1,0 +1,9 @@
+[toolchain]
+# Pinned deliberately. A floating `nightly` would silently move the codegen
+# behind an already-validated ABI, so the pin is part of the Gate 0 baseline.
+#
+# Kept identical to `engine/ui-cabi/rust-toolchain.toml` so that Gate 1 builds
+# the retained UI core with the same compiler that Gate 0 validated.
+channel = "nightly-2026-07-02"
+components = ["rust-src"]
+profile = "minimal"
