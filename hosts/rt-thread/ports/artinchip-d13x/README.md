@@ -256,10 +256,14 @@ msh /> pjs_abi_panic    # deliberate panic; must abort and halt
 
 ## Memory plan
 
+Planning figures - `PSRAM_SW`'s size in particular has not been read from this
+board's configuration yet. Gate 1's first task is to report the real numbers
+from the current SDK config instead of inheriting the assumption.
+
 ```
 SRAM (1 MiB)          RT-Thread kernel, interrupts, thread stacks,
                       driver state, hot native state
-PSRAM_SW (16 MiB)     PocketJS Rust heap, QuickJS heap, UI tree,
+PSRAM_SW (16 MiB?)    PocketJS Rust heap, QuickJS heap, UI tree,
                       DrawList, text, general runtime buffers
 PSRAM_CMA             framebuffer, GE, DMA, MPP buffers
 ```
@@ -272,7 +276,7 @@ that seam at `aic_memheap_malloc(MEM_PSRAM_SW)` without touching the Rust side.
 
 | Gate | Scope | Status |
 |------|-------|--------|
-| 0 | Rust ILP32D toolchain bridge, ABI, allocator | **ABI passed on silicon; 1 allocator defect found, fixed, awaiting re-flash** - see [GATE0-REPORT.md](GATE0-REPORT.md) |
+| 0 | Rust ILP32D toolchain bridge, ABI, allocator | **PASS on hardware** — 47/47 checks, `RESULT PASS`. Two evidence gaps (deliberate panic, post-reset re-run) - see [GATE0-REPORT.md](GATE0-REPORT.md) |
 | 1 | Retained UI core (`no_std` + alloc) | not started |
 | 2 | RGB565 software renderer -> AIC framebuffer | not started |
 | 3 | QuickJS-ng guest | not started |
@@ -281,9 +285,13 @@ that seam at `aic_memheap_malloc(MEM_PSRAM_SW)` without touching the Rust side.
 | 6 | Touch input | not started |
 | 7 | GE acceleration | not started |
 
-Gate 0's ABI layer **has** run on silicon and passed; the allocator did not, and
-is fixed but not yet re-flashed. Until Gate 0 closes, the runtime stays a
-conformance probe: no UI core, no QuickJS, no framebuffer, no GE.
+Gate 0 passed on real silicon: the whole C↔Rust ABI plus the allocator, 47 of 47
+checks. Run 1 is kept in the report because it is what caught the allocator
+defect. The deliberate `pjs_abi_panic` and a post-reset re-run are still
+uncaptured, and are flagged as such rather than assumed.
+
+Until Gate 1 is reviewed and passed, the runtime stays a conformance probe: no
+UI core, no QuickJS, no framebuffer, no GE.
 
 ## Directory map
 
