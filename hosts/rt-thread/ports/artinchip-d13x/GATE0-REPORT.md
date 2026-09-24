@@ -105,11 +105,12 @@ PocketJS `d13x` (9 commits, all Conventional Commits):
 | `70c4cca` | `fix(d13x): make the port tooling report true state and rebuild reproducibly` |
 | `a926701` | `fix(d13x): honour the caller's alignment in the host allocator` |
 
-SDK `pocketjs-d13x` (1 commit on top of the fork point):
+SDK `pocketjs-d13x` (2 commits on top of the fork point):
 
 | SHA | Subject |
 |-----|---------|
 | `16837b2d` | `feat(pocketjs): add the PocketJS runtime package and the Gate 0 application` |
+| `b9664c44` | `fix(pocketjs): honour the caller's alignment in the host allocator` |
 
 Cut from `f7572509`; the working tree carries the port only. No force-push, no
 `main` modification, no `d211` derivation.
