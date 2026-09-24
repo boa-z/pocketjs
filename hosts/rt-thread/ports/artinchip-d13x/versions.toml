@@ -1,0 +1,74 @@
+# PocketJS ArtInChip D13x port - pinned baseline.
+#
+# Recorded by actually running the commands, not copied from documentation.
+# Once Gate 0 starts, these SHAs do not move without a dedicated upgrade task
+# that re-runs the ABI, core, renderer and QuickJS gates.
+
+[pocketjs]
+# Baseline this port branched from. `main` at the time the d13x branch was cut.
+commit = "d7deb80e5ddbebf50180ab90f309455758a65c21"
+branch = "d13x"
+remote = "https://github.com/boa-z/pocketjs.git"
+
+[luban_lite]
+repository = "artinchip/luban-lite"
+# Official release channel: https://github.com/artinchip/luban-lite
+# ("This repository is the official release channel for ArtInchip's Luban SDK")
+#
+# NOTE: the spec asked for gitee.com/artinchip/luban-lite on branch `master`.
+# Two deviations were forced by reality and are recorded rather than hidden:
+#   1. gitee.com returns HTTP 401 for anonymous git access, so it cannot be
+#      cloned without credentials. The official GitHub mirror was used instead.
+#   2. The official repository has no `master` branch; `main` is the default
+#      and only branch.
+url = "https://github.com/artinchip/luban-lite.git"
+commit = "77fbe30dd2de366fae702ece84e1694153d94591"
+branch = "main"
+# Upstream tip date. This mirror is a 2024 snapshot, not the live gitee tree.
+upstream_pushed_at = "2024-02-23T12:12:03Z"
+# Sparse checkout: doc/ and docs/ are excluded (they are ~800 images and have
+# no bearing on a firmware build). Everything the D13x build needs is present.
+checkout = "sparse"
+
+[rust]
+# Pinned deliberately. Matches engine/ui-cabi/rust-toolchain.toml so Gate 1
+# builds the retained UI core with the compiler Gate 0 validated.
+toolchain = "nightly-2026-07-02"
+rustc = "1.98.0-nightly (4c9d2bfe4 2026-07-01)"
+components = ["rust-src"]
+build_std = ["core", "alloc", "compiler_builtins"]
+# Required by this rustc: JSON target specs need an explicit opt-in.
+extra_flags = ["-Zjson-target-spec"]
+
+[target]
+# The name comes from the JSON filename: rust/targets/d13x-e907-ilp32d.json
+name = "d13x-e907-ilp32d"
+arch = "riscv32"
+abi = "ilp32d"
+cpu = "e907fdp"
+isa = "rv32imafdc"
+# Deliberately excludes the firmware's P extension, XThead and vendor
+# instructions (spec 10.1). Rust emits the standard RV32IMAFDC subset, which
+# is what the SDK itself uses for M_DEVICE.
+pointer_width = 32
+panic = "abort"
+freestanding = true
+
+[firmware_toolchain]
+# Bundled with the D50T product SDK. The official Luban-Lite repo does not
+# vendor a toolchain, and this is the same Xuantie ELF toolchain the SDK
+# expects (PREFIX riscv64-unknown-elf-).
+vendor = "Xuantie"
+release = "Xuantie-900 elf newlib gcc Toolchain V2.6.1 B-20220906"
+gcc = "10.2.0"
+prefix = "riscv64-unknown-elf-"
+
+[firmware_flags]
+# Read from bsp/artinchip/sys/d13x/rtconfig.py in the pinned SDK, CPUNAME=e907fdp.
+march = "rv32imafdcpzpsfoperand_xtheade"
+mabi = "ilp32d"
+mcmodel = "medlow"
+# The SDK's own module build uses exactly this subset, which is the precedent
+# for the Rust target's ISA choice.
+m_device_march = "rv32imafdc"
+m_device_mabi = "ilp32d"
