@@ -1,0 +1,24 @@
+[package]
+name = "pocketjs-d13x-abi-probe"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# Standalone crate: it is consumed by the ArtInChip SCons build as a bare
+# staticlib, so it must not be absorbed into any host Cargo workspace.
+[workspace]
+
+[lib]
+name = "pocketjs_abi_probe"
+crate-type = ["staticlib"]
+
+[features]
+default = []
+
+# Keep debug info: Gate 0 static verification runs readelf/objdump/nm over the
+# archive and needs readable symbol and line information.
+[profile.release]
+panic = "abort"
+opt-level = "s"
+debug = true
