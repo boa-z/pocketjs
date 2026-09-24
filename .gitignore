@@ -3,6 +3,9 @@ node_modules/
 target/
 hosts/esp-idf/components/*/lib/
 .DS_Store
+# Python bytecode from the host port tooling (hosts/rt-thread/ports/**/tools)
+__pycache__/
+*.pyc
 
 # pass-1 transform cache (content-hash keyed; safe to delete any time)
 .cache/

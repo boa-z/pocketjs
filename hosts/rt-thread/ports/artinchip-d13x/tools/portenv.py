@@ -83,6 +83,36 @@ def sdk_head_sha() -> str:
     return _git(sdk_root(), "rev-parse", "HEAD").strip()
 
 
+def sdk_head_descends_from(sha: str) -> bool:
+    """True when `sha` is an ancestor of the SDK's HEAD (equal counts).
+
+    ``base_commit`` is the *fork point*, so on the port branch HEAD is expected
+    to sit ahead of it. The invariant worth enforcing is that the pinned
+    baseline is still in this branch's history - a failure means the port was
+    built on the wrong tree, or the history was rewritten.
+    """
+    if not sha:
+        return False
+    proc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", sha, "HEAD"],
+        cwd=str(sdk_root()),
+        capture_output=True,
+        text=True,
+    )
+    # 0 = ancestor, 1 = not an ancestor, other = bad object / not a repo
+    return proc.returncode == 0
+
+
+def sdk_commits_ahead(sha: str) -> int:
+    """How many commits HEAD is ahead of `sha` (0 when equal)."""
+    if not sha:
+        return 0
+    try:
+        return int(_git(sdk_root(), "rev-list", "--count", f"{sha}..HEAD").strip() or 0)
+    except (ValueError, SystemExit):
+        return 0
+
+
 def sdk_branch() -> str:
     """Current branch name, or a detached-HEAD description."""
     out = _git(sdk_root(), "rev-parse", "--abbrev-ref", "HEAD").strip()
@@ -229,6 +259,60 @@ def rustc_path() -> str:
     if not found:
         raise SystemExit("rustc not found on PATH.")
     return found
+
+
+# ---------------------------------------------------------------------------
+# SCons interpreter
+# ---------------------------------------------------------------------------
+
+# Where this port's tooling is normally provisioned (see the repo README).
+_VENV_CANDIDATES = (
+    Path.home() / ".workbuddy-ai" / "binaries" / "python" / "envs" / "default"
+    / "Scripts" / "python.exe",
+    Path.home() / ".workbuddy-ai" / "binaries" / "python" / "envs" / "default"
+    / "bin" / "python",
+)
+
+
+def scons_python() -> str:
+    """An interpreter that can ``import SCons``.
+
+    Luban-Lite is built with SCons, but SCons is not stdlib: whichever Python
+    runs the build tools must be the one it was installed into. Assuming
+    ``sys.executable`` fails confusingly (``No module named SCons``) when the
+    tools are launched with a bare interpreter that never had it. So probe the
+    candidates instead, and on failure print the one-line fix.
+    """
+    candidates: list[str] = []
+    env = os.environ.get("POCKETJS_SCONS_PYTHON")
+    if env:
+        candidates.append(env)
+    candidates.append(sys.executable)
+    candidates.extend(str(p) for p in _VENV_CANDIDATES)
+    for name in ("python3", "python"):
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+
+    tried: list[str] = []
+    for cand in candidates:
+        if not cand or cand in tried:
+            continue
+        tried.append(cand)
+        if not Path(cand).is_file():
+            continue
+        proc = subprocess.run([cand, "-c", "import SCons"],
+                              capture_output=True, text=True)
+        if proc.returncode == 0:
+            return cand
+
+    raise SystemExit(
+        "No Python with SCons found - Luban-Lite cannot be built.\n"
+        "Install it into the interpreter you build with:\n"
+        f"  {sys.executable} -m pip install scons\n"
+        "or point POCKETJS_SCONS_PYTHON at an interpreter that already has it.\n"
+        "Tried:\n" + "".join(f"  {t}\n" for t in tried)
+    )
 
 
 def info(msg: str) -> None:

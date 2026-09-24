@@ -158,12 +158,21 @@ string.
 ```bash
 export POCKETJS_AIC_SDK_ROOT=/path/to/luban-lite-jc-d50t-rev   # optional; versions.toml pins it
 export POCKETJS_AIC_TOOLCHAIN=$POCKETJS_AIC_SDK_ROOT/toolchain # optional; dir containing bin/
+export POCKETJS_SCONS_PYTHON=/path/to/python-with-scons       # optional; auto-discovered
 ```
 
 Both are discovered automatically from `versions.toml` and the SDK's own
 `toolchain/` directory, so a correctly placed checkout needs no environment at
 all. The SDK vendors Xuantie GCC at `<sdk>/toolchain`; the version actually used
 is recorded in `versions.toml`.
+
+**SCons is not stdlib.** Luban-Lite is built by SCons, which must be installed
+into the interpreter that runs the build - not necessarily the one you launched
+the script with. `build-firmware.py` therefore probes for an interpreter that
+can `import SCons` (env override → current interpreter → the tooling venv →
+`PATH`) and, if none qualifies, stops with the exact `pip install scons` line
+instead of failing later with a bare `No module named SCons`. Use
+`POCKETJS_SCONS_PYTHON` to point it at a specific interpreter.
 
 ### 1. Point the port at the SDK
 
@@ -225,7 +234,7 @@ scons -j8
 
 Images land in
 `output/d13x_d50t-2-lite_rt-thread_pocketjs-smoke/images/` and are copied into
-`.pocket-build/validation/d13x/gate0/<stamp>/` as evidence.
+`.pocket-build/d13x/validation/gate0/<stamp>/` as evidence.
 
 ### 5. On target
 
@@ -302,4 +311,4 @@ packages/third-party/Kconfig             one injected `source` line
 ```
 
 Validation artifacts (board logs, objdump, readelf dumps, receipts) go to
-`.pocket-build/validation/d13x/<gate>/<run>/` and are never committed.
+`.pocket-build/d13x/validation/<gate>/<run>/` and are never committed.

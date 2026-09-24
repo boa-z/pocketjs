@@ -128,7 +128,7 @@ def main() -> int:
         "--receipt",
         type=Path,
         default=None,
-        help="write a build receipt (default: .pocket-build/validation/d13x/gate0/<run>/native-build.txt)",
+        help="write a build receipt (default: .pocket-build/d13x/validation/gate0/<run>/native-build.txt)",
     )
     ap.add_argument("--no-patch-attrs", action="store_true",
                     help="skip the RISC-V attribute normalisation (the link will fail)")
