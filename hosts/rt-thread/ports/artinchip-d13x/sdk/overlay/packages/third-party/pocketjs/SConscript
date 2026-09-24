@@ -9,6 +9,7 @@
 # Layout:
 #   include/pocketjs_d13x.h   the C <-> Rust ABI contract (mirrored by the crate)
 #   src/pocketjs_host.c       host services Rust calls back into + MSH commands
+#   src/pocketjs_alloc.c      the host allocator (kept separate so it is host-testable)
 #   rust/                     the crate, so the package is rebuildable in place
 #   lib/                      drop-box for libpocketjs_abi_probe.a (git-ignored)
 #

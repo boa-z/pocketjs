@@ -44,6 +44,7 @@ APP_REL = Path("application") / "rt-thread" / "pocketjs-smoke"
 VENDORED = {
     PKG_REL / "include" / "pocketjs_d13x.h": env.PORT_ROOT / "include" / "pocketjs_d13x.h",
     PKG_REL / "src" / "pocketjs_host.c": env.PORT_ROOT / "src" / "pocketjs_host.c",
+    PKG_REL / "src" / "pocketjs_alloc.c": env.PORT_ROOT / "src" / "pocketjs_alloc.c",
     PKG_REL / "rust" / "rust-toolchain.toml": env.PORT_ROOT / "rust" / "rust-toolchain.toml",
     PKG_REL / "rust" / "targets" / "d13x-e907-ilp32d.json":
         env.PORT_ROOT / "rust" / "targets" / "d13x-e907-ilp32d.json",

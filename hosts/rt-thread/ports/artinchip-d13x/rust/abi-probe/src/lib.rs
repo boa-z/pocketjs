@@ -74,6 +74,7 @@ pub struct AbiAllocReport {
     pub vec_sum: u32,
     pub string_len: u32,
     pub string_hash: u32,
+    pub align8_ok: u32,
     pub align_ok: u32,
     pub live_bytes: u32,
     pub peak_bytes: u32,
@@ -117,8 +118,8 @@ unsafe extern "C" {
     fn pjs_host_value(v: AbiValue) -> AbiValue;
     fn pjs_host_nested(v: AbiNested) -> AbiNested;
     fn pjs_host_mixed(a: u32, b: f32, c: f64, p: *const u32, n: u32) -> f64;
-    fn pjs_host_alloc(size: u32) -> *mut u8;
-    fn pjs_host_free(p: *mut u8);
+    fn pjs_host_alloc(size: u32, align: u32) -> *mut u8;
+    fn pjs_host_free(p: *mut u8, align: u32);
     fn pjs_host_abort() -> !;
 }
 
@@ -126,29 +127,25 @@ unsafe extern "C" {
 // Allocator
 // ---------------------------------------------------------------------------
 
-/// Alignment the C host allocator promises. RT-Thread's `rt_malloc` and the
-/// AIC memheap both align to at least 8 bytes; the C harness asserts this.
-const HOST_GUARANTEED_ALIGN: usize = 8;
-
-/// Bytes reserved in front of an over-aligned block to stash the raw host
-/// pointer, so `dealloc` can hand the original pointer back.
-const ALIGN_HEADER: usize = core::mem::size_of::<usize>();
-
+/// Alignment is *not* assumed here. The layout's own requirement is handed to
+/// the host, which is responsible for honouring it - including over-allocating
+/// when the heap cannot. An earlier revision hardcoded "the host gives 8 bytes"
+/// and aborted the probe on the first `Box<u32>` on real silicon, because this
+/// board's RT-Thread heap only guarantees RT_ALIGN_SIZE == 4.
 static LIVE_BYTES: AtomicU32 = AtomicU32::new(0);
 static PEAK_BYTES: AtomicU32 = AtomicU32::new(0);
 static ALLOC_COUNT: AtomicU32 = AtomicU32::new(0);
 static FREE_COUNT: AtomicU32 = AtomicU32::new(0);
 static FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
 
-/// Bytes actually requested from the host for `layout`. Deterministic, so
-/// `dealloc` can recompute it without extra bookkeeping.
-fn host_block_size(layout: &Layout) -> usize {
-    let size = if layout.size() == 0 { 1 } else { layout.size() };
-    if layout.align() <= HOST_GUARANTEED_ALIGN {
-        size
+/// Bytes requested from the host for `layout`. Deterministic, so `dealloc` can
+/// recompute it without extra bookkeeping. This is the *caller's* size: the
+/// host's own header and padding are its business, not the guest's.
+fn request_size(layout: &Layout) -> usize {
+    if layout.size() == 0 {
+        1
     } else {
-        // Room for the header plus worst-case alignment padding.
-        size + layout.align() + ALIGN_HEADER
+        layout.size()
     }
 }
 
@@ -156,35 +153,23 @@ struct HostAllocator;
 
 unsafe impl GlobalAlloc for HostAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let total = match host_block_size(&layout) {
-            // host_block_size cannot overflow for realistic layouts, but keep
-            // the guard explicit: a bogus Layout must fail, not wrap.
-            t if t > (u32::MAX as usize) => {
-                FAIL_COUNT.fetch_add(1, Ordering::Relaxed);
-                return ptr::null_mut();
-            }
-            t => t,
-        };
+        let size = request_size(&layout);
 
-        let raw = unsafe { pjs_host_alloc(total as u32) };
+        // Cannot overflow for realistic layouts, but keep the guard explicit:
+        // a bogus Layout must fail, not wrap.
+        if size > (u32::MAX as usize) {
+            FAIL_COUNT.fetch_add(1, Ordering::Relaxed);
+            return ptr::null_mut();
+        }
+
+        let raw = unsafe { pjs_host_alloc(size as u32, layout.align() as u32) };
         if raw.is_null() {
             FAIL_COUNT.fetch_add(1, Ordering::Relaxed);
             return ptr::null_mut();
         }
 
-        let out = if layout.align() <= HOST_GUARANTEED_ALIGN {
-            raw
-        } else {
-            // Over-allocate and hand back a suitably aligned interior pointer.
-            let align = layout.align();
-            let base = raw as usize + ALIGN_HEADER;
-            let aligned = (base + align - 1) & !(align - 1);
-            unsafe { (aligned as *mut usize).write(raw as usize) };
-            aligned as *mut u8
-        };
-
         ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-        let live = LIVE_BYTES.fetch_add(total as u32, Ordering::Relaxed) + total as u32;
+        let live = LIVE_BYTES.fetch_add(size as u32, Ordering::Relaxed) + size as u32;
         // Single-threaded owner by contract (see the RT-Thread thread model),
         // so a plain compare-and-store keeps the peak accurate enough for
         // telemetry.
@@ -201,22 +186,19 @@ unsafe impl GlobalAlloc for HostAllocator {
             }
         }
 
-        out
+        raw
     }
 
     unsafe fn dealloc(&self, p: *mut u8, layout: Layout) {
         if p.is_null() {
             return;
         }
-        let raw = if layout.align() <= HOST_GUARANTEED_ALIGN {
-            p
-        } else {
-            ((p as usize - ALIGN_HEADER) as *const usize).read() as *mut u8
-        };
-        unsafe { pjs_host_free(raw) };
+        // GlobalAlloc guarantees `dealloc` sees the allocating layout, so the
+        // same alignment goes back and the host knows whether it used a header.
+        unsafe { pjs_host_free(p, layout.align() as u32) };
 
         FREE_COUNT.fetch_add(1, Ordering::Relaxed);
-        LIVE_BYTES.fetch_sub(host_block_size(&layout) as u32, Ordering::Relaxed);
+        LIVE_BYTES.fetch_sub(request_size(&layout) as u32, Ordering::Relaxed);
     }
 }
 
@@ -366,6 +348,14 @@ pub extern "C" fn pjs_probe_alloc(out: *mut AbiAllocReport) {
     r.string_len = s.len() as u32;
     r.string_hash = fnv1a(s.as_bytes());
     drop(s);
+
+    // 8-byte alignment: what every f64-bearing type in this ABI needs, and the
+    // exact case the first hardware run failed on - the host heap only aligns
+    // to RT_ALIGN_SIZE == 4. `Box<f64>` requests align 8, so this asserts the
+    // host honoured a request it cannot satisfy from its own heap alignment.
+    let bf = Box::new(1.5f64);
+    r.align8_ok = u32::from((bf.as_ref() as *const f64 as usize) % 8 == 0);
+    drop(bf);
 
     // Over-aligned allocation: f64-bearing aggregates need 8 bytes, and the UI
     // core will want more. Prove the wrapper honours a request the host

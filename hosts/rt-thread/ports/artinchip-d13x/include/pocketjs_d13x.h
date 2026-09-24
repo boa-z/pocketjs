@@ -66,7 +66,8 @@ typedef struct pjs_abi_alloc_report {
     uint32_t vec_sum;
     uint32_t string_len;
     uint32_t string_hash;
-    uint32_t align_ok;
+    uint32_t align8_ok;     /* Box<f64>: an 8-byte request was honoured      */
+    uint32_t align_ok;      /* 64-byte request: the over-alignment path      */
     uint32_t live_bytes;
     uint32_t peak_bytes;
 } pjs_abi_alloc_report_t;
@@ -140,10 +141,20 @@ double pjs_probe_call_host_mixed(uint32_t a, float b, double c, const uint32_t *
 /* Byte-oriented log sink. `msg` is not NUL terminated. */
 void pjs_host_log(const char *msg, uint32_t len);
 
-/* Raw allocator. MUST return memory aligned to at least 8 bytes, or
- * return NULL. Rust enforces any stronger alignment itself. */
-void *pjs_host_alloc(uint32_t size);
-void pjs_host_free(void *ptr);
+/* Raw allocator. Returns memory aligned to `align` (a power of two), or NULL.
+ *
+ * The caller states the alignment it needs instead of relying on a fixed heap
+ * guarantee. That is deliberate: this board's RT-Thread heap only promises
+ * RT_ALIGN_SIZE, which is 4 here, so an allocator that assumed 8 handed Rust a
+ * 4-byte-aligned block for an 8-byte-aligned type. `align` is clamped up to
+ * sizeof(void *) and anything above the heap's own alignment is served by
+ * over-allocating.
+ *
+ * `pjs_host_free` must be given the same `align` that produced `ptr` - the
+ * GlobalAlloc contract guarantees `dealloc` sees the allocating layout, so the
+ * Rust side passes it straight back. */
+void *pjs_host_alloc(uint32_t size, uint32_t align);
+void pjs_host_free(void *ptr, uint32_t align);
 
 /* Never returns. Used by the Rust panic handler (panic = abort). */
 void pjs_host_abort(void);
