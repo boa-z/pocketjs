@@ -208,12 +208,21 @@ Output: `.pocket-build/d13x/rust-target/d13x-e907-ilp32d/release/libpocketjs_abi
 ```bash
 python hosts/rt-thread/ports/artinchip-d13x/tools/check-abi.py
 python hosts/rt-thread/ports/artinchip-d13x/tools/check-sdk.py
+python hosts/rt-thread/ports/artinchip-d13x/tools/test-alloc-host.py
 ```
 
 `check-abi.py` asserts ELF32, RISC-V, `EF_RISCV_FLOAT_ABI_DOUBLE`, an ISA string
 with `d` and without `p`/`xthead`, hardware `.d` arithmetic in the probe
 functions, `fa0` as the f64 argument/return register, and no POSIX/libc
 dependency hiding in the undefined symbols.
+
+`test-alloc-host.py` compiles `src/pocketjs_alloc.c` against a stubbed RT-Thread
+heap and runs it on the build host (needs a C compiler; `PJS_HOST_CC` overrides).
+The stub's heap base is deterministically **4-but-not-8 aligned**, reproducing
+the board, and the test checks that every requested alignment is honoured and
+that every `free` returns a block `rt_malloc` actually issued. This exists
+because the first hardware run passed the entire ABI and then aborted in the
+allocator - arithmetic that a host test can cover, so it does.
 
 ### 4. Firmware
 
@@ -263,7 +272,7 @@ that seam at `aic_memheap_malloc(MEM_PSRAM_SW)` without touching the Rust side.
 
 | Gate | Scope | Status |
 |------|-------|--------|
-| 0 | Rust ILP32D toolchain bridge, ABI, allocator | **build-validated, NOT hardware-validated** - see [GATE0-REPORT.md](GATE0-REPORT.md) |
+| 0 | Rust ILP32D toolchain bridge, ABI, allocator | **ABI passed on silicon; 1 allocator defect found, fixed, awaiting re-flash** - see [GATE0-REPORT.md](GATE0-REPORT.md) |
 | 1 | Retained UI core (`no_std` + alloc) | not started |
 | 2 | RGB565 software renderer -> AIC framebuffer | not started |
 | 3 | QuickJS-ng guest | not started |
@@ -272,7 +281,8 @@ that seam at `aic_memheap_malloc(MEM_PSRAM_SW)` without touching the Rust side.
 | 6 | Touch input | not started |
 | 7 | GE acceleration | not started |
 
-Gate 0 has **not** run on silicon. Until it does, the runtime stays a
+Gate 0's ABI layer **has** run on silicon and passed; the allocator did not, and
+is fixed but not yet re-flashed. Until Gate 0 closes, the runtime stays a
 conformance probe: no UI core, no QuickJS, no framebuffer, no GE.
 
 ## Directory map
@@ -281,13 +291,15 @@ conformance probe: no UI core, no QuickJS, no framebuffer, no GE.
 ports/artinchip-d13x/                    (PocketJS repo - development home)
 ├── include/pocketjs_d13x.h    C <-> Rust ABI contract (single source of truth)
 ├── src/pocketjs_host.c        host services Rust calls + pjs_abi MSH commands
+├── src/pocketjs_alloc.c       host allocator, split out so it is host-testable
 ├── rust/
 │   ├── rust-toolchain.toml    pinned toolchain
 │   ├── targets/               d13x-e907-ilp32d.json
 │   └── abi-probe/             Gate 0 Rust crate
 ├── tools/                     build-native.py, build-firmware.py, apply-sdk.py,
 │                              patch-riscv-attrs.py, check-abi.py,
-│                              check-sdk.py, portenv.py
+│                              check-sdk.py, test-alloc-host.py, portenv.py
+├── tools/host-test/           stub RT-Thread heap + the allocator test
 ├── sdk/
 │   └── overlay/               files copied into the SDK tree
 └── versions.toml              machine-readable pin
@@ -301,6 +313,7 @@ packages/third-party/pocketjs/           (SDK branch - generated, rebuildable)
 ├── SConscript                 builds src/*.c and links the Rust archive
 ├── include/pocketjs_d13x.h    vendored copy of the ABI contract
 ├── src/pocketjs_host.c        vendored copy of the host glue
+├── src/pocketjs_alloc.c       vendored copy of the host allocator
 ├── rust/                      vendored crate + JSON target spec
 ├── lib/                       drop-box for libpocketjs_abi_probe.a (git-ignored)
 └── README.md                  what this package is and why
