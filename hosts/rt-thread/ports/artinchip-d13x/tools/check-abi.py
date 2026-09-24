@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import sys
+from pathlib import Path
 
 import portenv as pe
 
@@ -108,9 +109,24 @@ def main() -> int:
     print(f"       ({len(flags)} member ELF headers inspected)")
 
     # --- ISA attributes ----------------------------------------------------
+    # The archive may have been through patch-riscv-attrs.py, which removes
+    # .riscv.attributes so binutils 2.35 can link against the vendor libc. In
+    # that case the as-emitted metadata lives in the sidecar evidence file, and
+    # checking it there is still checking what rustc actually produced.
     attr = pe.run([readelf, "-A", arc]).stdout
+    arch_source = "archive"
+    if not re.search(r"Tag_RISCV_arch:", attr):
+        side = Path(arc + ".riscv-attrs.txt")
+        if side.is_file():
+            attr = side.read_text(encoding="utf-8")
+            arch_source = str(side)
+        else:
+            arch_source = "MISSING"
+    print(f"       (ISA attributes read from: {arch_source})")
+
     arches = set(re.findall(r'Tag_RISCV_arch:\s+"([^"]+)"', attr))
-    check(bool(arches), "Tag_RISCV_arch present")
+    check(bool(arches), "Tag_RISCV_arch present",
+          "archive was normalised but no sidecar evidence file was found")
     joined = " ".join(arches)
     check("_d2p" in joined, "Tag_RISCV_arch advertises the D extension")
     check("_f2p" in joined, "Tag_RISCV_arch advertises the F extension")

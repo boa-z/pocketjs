@@ -450,7 +450,10 @@ static void case_alloc(void)
 /* MSH entry points                                                    */
 /* ------------------------------------------------------------------ */
 
-static int pjs_abi_run(void)
+/* Non-static: the Gate 0 application calls this once at boot so the evidence
+ * lands on the console without anyone having to type at the MSH prompt, and
+ * `pjs_abi` re-runs it on demand. */
+int pjs_abi_run(void)
 {
     rt_size_t heap_total = 0, heap_used = 0, heap_max = 0;
 
