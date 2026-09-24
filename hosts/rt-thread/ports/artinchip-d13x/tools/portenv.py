@@ -53,23 +53,29 @@ def versions_toml() -> Path:
 # ---------------------------------------------------------------------------
 
 def sdk_root() -> Path:
-    """Locate the official ArtInChip Luban-Lite checkout.
+    """Locate the Luban-Lite checkout this port builds against.
 
-    Order: explicit env override, then the sibling layout the spec prescribes
-    (``<workspace>/luban-lite`` next to ``<workspace>/pocketjs``).
+    Order: explicit env override, then the path pinned in ``versions.toml``,
+    then the sibling layout (``<workspace>/luban-lite`` beside ``pocketjs``).
     """
     env = os.environ.get("POCKETJS_AIC_SDK_ROOT")
     if env:
         return Path(env).expanduser().resolve()
+
+    pinned = _toml_str("luban_lite", "local_path")
+    if pinned:
+        cand = Path(pinned).expanduser()
+        if (cand / "SConstruct").is_file():
+            return cand.resolve()
 
     sibling = repo_root().parent / "luban-lite"
     if (sibling / "SConstruct").is_file():
         return sibling.resolve()
 
     raise SystemExit(
-        "Cannot locate the ArtInChip Luban-Lite checkout.\n"
-        "Set POCKETJS_AIC_SDK_ROOT, or place it at:\n"
-        f"  {sibling}"
+        "Cannot locate the Luban-Lite checkout.\n"
+        "Set POCKETJS_AIC_SDK_ROOT, or make sure it exists at:\n"
+        f"  {pinned or sibling}"
     )
 
 
@@ -77,8 +83,65 @@ def sdk_head_sha() -> str:
     return _git(sdk_root(), "rev-parse", "HEAD").strip()
 
 
+def sdk_branch() -> str:
+    """Current branch name, or a detached-HEAD description."""
+    out = _git(sdk_root(), "rev-parse", "--abbrev-ref", "HEAD").strip()
+    return out
+
+
+def sdk_dirty_entries() -> list[str]:
+    """Tracked modifications in the SDK tree, excluding submodule churn.
+
+    Submodule pointer noise (`` m <path>`` / `` M <path>``) is filtered out
+    because the product SDK legitimately carries submodules that the port never
+    touches; only real source edits should be able to fail the gate.
+    """
+    raw = _git(sdk_root(), "status", "--porcelain").strip()
+    if not raw:
+        return []
+    entries = []
+    for line in raw.splitlines():
+        if len(line) > 2 and line[1] == "M" and line[2] == " ":
+            continue  # submodule worktree change
+        entries.append(line)
+    return entries
+
+
 def sdk_is_dirty() -> bool:
-    return bool(_git(sdk_root(), "status", "--porcelain").strip())
+    return bool(sdk_dirty_entries())
+
+
+def port_branch() -> str:
+    return _toml_str("luban_lite", "port_branch") or "pocketjs-d13x"
+
+
+def sdk_base_commit() -> str:
+    return _toml_str("luban_lite", "base_commit") or ""
+
+
+def _toml_str(section: str, key: str) -> str | None:
+    """Minimal reader for the handful of flat string keys versions.toml holds."""
+    path = versions_toml()
+    if not path.is_file():
+        return None
+    current = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = line[1:-1].strip()
+            continue
+        if current != section or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        if k.strip() != key:
+            continue
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+            return v[1:-1]
+        return v
+    return None
 
 
 def _git(cwd: Path, *args: str) -> str:
