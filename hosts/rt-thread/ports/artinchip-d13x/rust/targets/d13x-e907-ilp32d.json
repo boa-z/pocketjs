@@ -1,0 +1,25 @@
+{
+  "arch": "riscv32",
+  "cpu": "generic-rv32",
+  "crt-objects-fallback": "false",
+  "data-layout": "e-m:e-p:32:32-i64:64-n32-S128",
+  "eh-frame-header": false,
+  "emit-debug-gdb-scripts": false,
+  "features": "+m,+a,+f,+d,+c",
+  "linker": "rust-lld",
+  "linker-flavor": "gnu-lld",
+  "llvm-abiname": "ilp32d",
+  "llvm-target": "riscv32",
+  "max-atomic-width": 32,
+  "metadata": {
+    "description": "ArtInChip D13x / Xuantie E907FDP - RV32IMAFDC + ILP32D hard-float, freestanding, no vendor extensions",
+    "host_tools": false,
+    "std": false,
+    "tier": 3
+  },
+  "os": "none",
+  "panic-strategy": "abort",
+  "relocation-model": "static",
+  "target-pointer-width": 32,
+  "vendor": "artinchip"
+}
