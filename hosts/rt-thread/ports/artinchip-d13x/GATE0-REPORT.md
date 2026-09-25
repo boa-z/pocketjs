@@ -526,10 +526,15 @@ silently assumed ones.
 
 ## 7. Memory
 
-**These are planning figures, not measurements.** The `PSRAM_SW` size in
-particular has not been read from this board's configuration yet; Gate 1's first
-task is to report the real numbers from the current SDK config rather than
-inherit an assumption.
+**These are planning figures, not measurements** — kept as written, because they
+are what Gate 0 was designed against.
+
+> **Superseded.** Gate 1A read the real numbers from the SDK config and the
+> linked image, and the `PSRAM_SW` guess below was wrong: it was **zero bytes**
+> on this board, not 16 MiB, and `MEM_PSRAM_SW` was not even an enumerator. It is
+> now 8 MiB, enabled in the port's own defconfig. The measured map is in
+> [GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md); do not plan against the block
+> below.
 
 ```
 SRAM (1 MiB)       RT-Thread kernel, interrupts, thread stacks,
@@ -618,16 +623,28 @@ heap is reserved by Gate 0 itself.
 commands; they do not block Gate 1, because the abort mechanism itself was
 observed working in run 1.
 
+**Still open as of Gate 1A's close.** Both are one console capture apart, and
+neither has been folded into a later run:
+
+```
+msh /> pjs_abi_panic    # expect: abort, board halts, no return
+# press reset
+msh /> pjs_abi          # expect: SUMMARY pass=47 fail=0 / RESULT PASS
+```
+
 ### Next: Gate 1 — retained UI core
 
 Gate 1 is the `no_std` + `alloc` retained UI core, and it closes issue 4 above
 (`pjs_host_log`) on the way. **No RGB565 renderer, no QuickJS, no framebuffer
 and no GE work starts until Gate 1 is reviewed and passed.**
 
-Gate 1's first task is a **memory-map report read from the current SDK config**,
-not from assumption: total PSRAM, and the PSRAM_SW and CMA base/size/end. §7's
-`PSRAM_SW (16 MiB)` is a planning figure that has **not** been verified against
-this board's `ram_param`/Kconfig and must not be treated as measured.
+**Gate 1A (the memory map and the allocator backend) is done — PASS on hardware,
+2026-09-25.** Its first task, the memory-map report read from the current SDK
+config rather than from assumption, is
+[GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md). §7's `PSRAM_SW (16 MiB)` was indeed
+wrong: it was zero bytes, and is now 8 MiB in the port's own defconfig.
+
+**Gate 1B–1C is what remains of Gate 1**, and has not started.
 
 ---
 
