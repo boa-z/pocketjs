@@ -257,7 +257,14 @@ scons -j8
 
 Images land in
 `output/d13x_d50t-2-lite_rt-thread_pocketjs-smoke/images/` and are copied into
-`.pocket-build/d13x/validation/gate0/<stamp>/` as evidence.
+`.pocket-build/d13x/validation/<gate>/<stamp>/` as evidence (`gate0` for the
+Gate 0 run, `gate1a` for the Gate 1A build). `.pocket-build/` is git-ignored:
+per-run captures are never committed.
+
+The Gate 1A artifact to flash is recorded in
+[GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §6.1.1 - `d13x.bin` sha256
+`c1d2c450…`, built at clean revision `ba2ea02` so the boot banner matches the
+commit.
 
 ### 5. On target
 
