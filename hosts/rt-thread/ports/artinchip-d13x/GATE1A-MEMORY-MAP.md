@@ -393,6 +393,10 @@ d13x_D50T-2-Lite_page_2k_block_128k_v1.0.0.img  833,024 B  sha256 1498e016…
 `d13x.bin` and `d13x.elf` are byte-identical in size to the `-g1a` build and
 differ only by the embedded revision string, which is the expected delta.
 
+The pin is on the revision the binary was **built from** (`ba2ea02`), not on
+`HEAD`. Committing this document afterwards moves `HEAD` but does not change the
+binary, so it does not invalidate the pin. Only a source change does.
+
 ---
 
 ## 7. Status

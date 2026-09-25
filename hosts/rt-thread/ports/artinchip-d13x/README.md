@@ -263,8 +263,9 @@ per-run captures are never committed.
 
 The Gate 1A artifact to flash is recorded in
 [GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §6.1.1 - `d13x.bin` sha256
-`c1d2c450…`, built at clean revision `ba2ea02` so the boot banner matches the
-commit.
+`c1d2c450…`. It was built from a clean tree at revision `ba2ea02`, so the boot
+banner reads exactly `ba2ea02`; a later docs-only commit does not change the
+binary or invalidate that pin.
 
 ### 5. On target
 
