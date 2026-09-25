@@ -338,7 +338,7 @@ be false and the fallback would compile.
 
 | Gate | Scope | Status |
 |------|-------|--------|
-| 0 | Rust ILP32D toolchain bridge, ABI, allocator | **PASS on hardware** — 47/47 checks, `RESULT PASS`. Two evidence gaps (deliberate panic, post-reset re-run) - see [GATE0-REPORT.md](GATE0-REPORT.md) |
+| 0 | Rust ILP32D toolchain bridge, ABI, allocator | **PASS on hardware — closed** — 47/47 checks, `RESULT PASS`. Both evidence gaps (deliberate panic, post-reset re-run) were captured on 2026-09-25 and pass - see [GATE0-REPORT.md](GATE0-REPORT.md) §9 |
 | 1A | PSRAM_SW allocator backend + `pjs_mem` / `pjs_mem_test` | **PASS on hardware** — `pass=26 fail=0`, `RESULT PASS`, with the Gate 0 regression re-confirmed at 47/47. Run 1 found one telemetry defect in the port's own code (`test.region_lo`); fixed, rebuilt and re-run clean. A third run reproduced every value — including the payload addresses — to the byte. See [GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §10, §11 |
 | 1B-1C | Retained UI core (`no_std` + alloc) | not started |
 | 2 | RGB565 software renderer -> AIC framebuffer | not started |
@@ -350,8 +350,9 @@ be false and the fallback would compile.
 
 Gate 0 passed on real silicon: the whole C↔Rust ABI plus the allocator, 47 of 47
 checks. Run 1 is kept in the report because it is what caught the allocator
-defect. The deliberate `pjs_abi_panic` and a post-reset re-run are still
-uncaptured, and are flagged as such rather than assumed.
+defect. The deliberate `pjs_abi_panic` and the post-reset re-run were carried as
+uncaptured for a while and flagged as such rather than assumed; **both were
+captured on 2026-09-25 and both pass**, so Gate 0 now has no open evidence gaps.
 
 Gate 1A passed on real silicon too, in two runs. Run 1 confirmed the memory plan
 (allocations in PSRAM_SW, SRAM heap flat, alignment, Box/Vec/String over 1000

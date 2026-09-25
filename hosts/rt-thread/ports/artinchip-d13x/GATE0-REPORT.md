@@ -23,8 +23,9 @@
 > defect existed, and it is the reason the allocator contract was redesigned
 > instead of patched.
 >
-> Two items remain **uncaptured** and are flagged rather than assumed: the
-> deliberate `pjs_abi_panic` abort, and a post-reset recovery re-run. See §9.
+> Both items that were carried as **uncaptured** — the deliberate
+> `pjs_abi_panic` abort and the post-reset recovery re-run — were captured on
+> 2026-09-25 and both pass. Gate 0 has no open evidence gaps. See §9.1 and §9.2.
 
 ---
 
@@ -486,7 +487,7 @@ What *is* independently confirmed:
   be produced by the later banner-fixed build, which pins which image was
   flashed.
 
-#### Still not captured
+#### Not captured in run 2 — both since closed
 
 Two items from the Gate 0 closeout checklist were **not** performed in run 2 and
 are flagged as open rather than assumed:
@@ -507,6 +508,10 @@ aic /> pjs_abi_panic    # expect: abort, board halts, no return
 aic /> pjs_abi          # expect: SUMMARY pass=47 fail=0 / RESULT PASS
 ```
 
+> **Both were closed on 2026-09-25** by the capture recorded in §9.1 and §9.2:
+> the deliberate panic aborted and halted the board, and `pjs_abi` printed
+> `pass=47 fail=0` after a reset. The text above is left as the run-2 record.
+
 ### Why Gate 0 passes
 
 The gate's stated criterion is that `pjs_abi` prints `RESULT PASS` on real
@@ -515,12 +520,12 @@ allocator cases that aborted in run 1.
 
 The `panic = abort` half was also observed for real in run 1 — the Rust panic
 reached the host and the board halted instead of continuing in a corrupt state.
-That is the behaviour the gate asks for. What is *not* yet demonstrated is the
-same path triggered **on demand** by `pjs_abi_panic`, and recovery after a
-reset; both are listed as open items above and in §9.
+That is the behaviour the gate asks for. What was *not* yet demonstrated at run 2
+was the same path triggered **on demand** by `pjs_abi_panic`, and recovery after
+a reset; **both were captured on 2026-09-25 and pass (§9.1, §9.2)**.
 
-So: **GATE 0 PASS**, with two explicitly unverified claims rather than two
-silently assumed ones.
+So: **GATE 0 PASS**, with two claims that were left explicitly unverified at run
+2 rather than silently assumed, and have since been verified.
 
 ---
 
@@ -557,12 +562,11 @@ heap is reserved by Gate 0 itself.
 
 ## 8. Known Issues
 
-1. **Two Gate 0 evidence gaps remain.** Gate 0 passes (run 2, §6), but the
-   deliberate `pjs_abi_panic` and the post-reset recovery re-run were never
-   performed. The abort path *was* observed for real in run 1, as the side
-   effect of the allocator defect — so the mechanism is proven, but not its
-   on-demand invocation. Neither gap is a defect; both are claims this report
-   declines to make. Closing them needs a board and two commands (§6).
+1. ~~**Two Gate 0 evidence gaps remain.**~~ **Resolved 2026-09-25.** At run 2,
+   the deliberate `pjs_abi_panic` and the post-reset recovery re-run had not been
+   performed. The abort path *was* observed for real in run 1, as the side effect
+   of the allocator defect — so the mechanism was proven, but not its on-demand
+   invocation. Both were subsequently captured and both pass; see §9.1 and §9.2.
 2. **The allocator alignment defect (found on hardware, fixed, host-tested).**
    Full analysis in §5.1. Worth keeping visible because of what it says about
    the process: every static check in this report passed while both sides
@@ -608,33 +612,76 @@ heap is reserved by Gate 0 itself.
 
 ## 9. Gate Status
 
-**Gate 0: PASS.** Two runs on real silicon; run 2 printed `RESULT PASS` with
-47 of 47 checks green, including the allocator cases that aborted in run 1.
+**Gate 0: PASS — closed.** Every step below is now captured on real silicon,
+including the two that were carried as open evidence gaps.
 
 | Step | Action | Status |
 |------|--------|--------|
-| 0a | Flash the image on D50T-2-Lite, capture the console | **done** — run 1, then run 2 |
-| 0b | Confirm `pjs_abi` → `RESULT PASS` on silicon | **done** — run 2: `pass=47 fail=0` |
-| 0c | Confirm the `panic = abort` path halts the board | **observed** in run 1 via an unplanned panic; the deliberate `pjs_abi_panic` is **not yet captured** |
-| 0d | Record the runs and update this report | **done** — run 1 and run 2, neither deleted |
-| 0e | Post-reset recovery re-run | **not yet captured** |
+| 0a | Flash the image on D50T-2-Lite, capture the console | **done** — run 1, run 2, then run 3 |
+| 0b | Confirm `pjs_abi` → `RESULT PASS` on silicon | **done** — run 2 and run 3: `pass=47 fail=0` |
+| 0c | Confirm the `panic = abort` path halts the board | **done** — deliberate `pjs_abi_panic`, 2026-09-25 |
+| 0d | Record the runs and update this report | **done** — runs 1–3, none deleted |
+| 0e | Post-reset recovery re-run | **done** — 2026-09-25: `pass=47 fail=0` after a reset |
 
-0c and 0e are the two open evidence gaps (§6, §8.1). They need a board and two
-commands; they do not block Gate 1, because the abort mechanism itself was
-observed working in run 1.
+### 9.1 Step 0c — the deliberate abort
 
-**Still open as of Gate 1A's close.** Both are one console capture apart, and
-neither has been folded into a later run:
+Captured at the prompt:
 
 ```
-aic /> pjs_abi_panic    # expect: abort, board halts, no return
-# press reset
-aic /> pjs_abi          # expect: SUMMARY pass=47 fail=0 / RESULT PASS
+aic /> pjs_abi_panic
+[pjs-abi] invoking Rust panic; expect an abort and a halted board
+[pjs-abi] ABORT: Rust panic reached the host (panic=abort).
+[pjs-abi] ABORT: firmware halted by design; reset the board.
 ```
 
-`pjs_abi_panic` is the one probe that is deliberately **not** auto-run at boot:
-it halts the board, so autorunning it would turn every boot into a halt. That is
-why neither item can be closed by a boot capture — both need an operator at the
+Both `ABORT:` lines appear, `FAIL  panic.returned` does not, and no prompt
+returns. The halt is structural rather than incidental: `pjs_host_abort()`
+(`src/pocketjs_host.c:95-107`) prints those two lines, calls
+`rt_enter_critical()` and spins in a bare `for (;;)`. With interrupts off no
+further console output is possible, so the absent prompt cannot be an artifact
+of a truncated capture.
+
+The first line is the stronger of the two: it reports the panic arriving at the
+*host* hook, so what is observed is the FFI handoff under `panic=abort`, not
+merely a message being printed.
+
+### 9.2 Step 0e — recovery after the reset
+
+```
+aic /> pjs_abi
+[pjs-abi] SUMMARY pass=47 fail=0
+[pjs-abi] RESULT PASS
+aic />
+```
+
+The returning `aic />` prompt is the positive evidence: the board is reachable
+and executing again after the halt, rather than wedged.
+
+Two readings differ from run 3's autorun. Both are expected, and both reconcile
+exactly:
+
+- **`allocs=4615`, where run 3's `pjs_abi` printed `allocs=5`.** The allocator
+  counters are cumulative for the life of a boot and are never reset in firmware
+  — `pjs_host_alloc_stats_reset()` has no caller on target, only in the host
+  test. This `pjs_abi` was typed *after* the boot autorun had already run both
+  probes, so it reports what those left behind plus its own. The arithmetic
+  closes: the autorun's `pjs_mem_test` printed `allocs=4610`, which is the
+  autorun's `pjs_abi` (5) plus its own stress (4605), and 5 + 4605 + 5 = 4615.
+- **`heap before: used=14196 max_used=22556`, where run 3 read `used=22556
+  max_used=22556`.** This is a one-instant sample of the RT-Thread system heap,
+  and the two captures sample at different points: run 3 read it during boot
+  (the SDMC driver had not finished — its message printed at `[0.906]`), this
+  one after boot had settled. That `max_used` is `22556` in **both** is the
+  proof they share the same peak; only the sampling instant moved.
+
+Neither reading bears on the Gate 1A claim, which rests on the *delta* across
+the stress run (`sram used 22556 -> 22556`) and not on any absolute heap figure.
+
+### 9.3 Why these needed an operator
+
+`pjs_abi_panic` is the one probe deliberately **not** auto-run at boot: it halts
+the board, so autorunning it would turn every boot into a halt. Neither item
+could therefore be closed by a boot capture — both needed an operator at the
 prompt. The prompt on this board is `aic />`, not `msh />`; earlier revisions of
 this report and of the port README printed `msh />`, which never appears on
 target. Corrected.
