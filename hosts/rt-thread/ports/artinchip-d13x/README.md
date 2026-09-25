@@ -220,9 +220,23 @@ dependency hiding in the undefined symbols.
 heap and runs it on the build host (needs a C compiler; `PJS_HOST_CC` overrides).
 The stub's heap base is deterministically **4-but-not-8 aligned**, reproducing
 the board, and the test checks that every requested alignment is honoured and
-that every `free` returns a block `rt_malloc` actually issued. This exists
+that every `free` returns a block the allocator actually issued. This exists
 because the first hardware run passed the entire ABI and then aborted in the
 allocator - arithmetic that a host test can cover, so it does.
+
+Gate 1A added a stub `aic_osal.h` so the same test can also see *which heap* the
+allocator asks for. Two checks come out of it:
+
+- **region contract** - both the fast path and the over-aligned path go through
+  `MEM_PSRAM_SW`, and nothing goes to `MEM_CMA` or the system heap. This is the
+  regression guard for the backend swap: putting `rt_malloc` back fails it.
+- **region window** - the PSRAM_SW window is a variable on the host, so the test
+  narrows it and confirms the out-of-region path actually fires, refuses the
+  allocation, and returns the rejected block to the heap. A check that can only
+  be taken on faith is not a check.
+
+33 checks, all passing. Where the pointers *land* is a board-side question, and
+`pjs_mem_test` answers it there.
 
 ### 4. Firmware
 
@@ -247,12 +261,22 @@ Images land in
 
 ### 5. On target
 
-Serial 115200 8N1. Then:
+Serial 115200 8N1. Both probes run once automatically at boot, so the evidence
+reaches the console without an operator at the prompt. Then:
 
 ```
-msh /> pjs_abi          # full conformance run, prints RESULT PASS/FAIL
-msh /> pjs_abi_panic    # deliberate panic; must abort and halt
+msh /> pjs_abi             # Gate 0 regression, prints RESULT PASS/FAIL
+msh /> pjs_mem             # heap map: SRAM / PSRAM_SW / CMA + region telemetry
+msh /> pjs_mem_test        # Gate 1A assertion, 1000 rounds by default
+msh /> pjs_mem_test 5000   # ...or however many you want
+msh /> pjs_abi_panic       # deliberate panic; must abort and halt
 ```
+
+`pjs_mem` only reads; `pjs_mem_test` changes the heap. They are separate
+commands so the report's numbers do not depend on whether the test has run.
+
+`pjs_mem_test` fails loudly if `heap_psram_sw` is not registered, rather than
+running a test that would pass by allocating from the wrong place.
 
 ## Memory plan
 
@@ -272,19 +296,33 @@ PSRAM_SW (8 MiB)       PocketJS Rust heap, UI tree, DrawList, text,
 ```
 
 8 MiB / ~7.77 MiB is a bring-up baseline, not a final budget; the split is
-re-budgeted once Gate 2 framebuffer and later GE/video numbers exist. The
-ordinary PocketJS allocator must never consume CMA.
+re-budgeted once Gate 2 framebuffer and later GE/video numbers exist.
 
-The ordinary PocketJS allocator must never consume CMA. Gate 0 uses the
-RT-Thread system heap behind a single seam (`pjs_host_alloc`); Phase 1 repoints
-that seam at `aic_memheap_malloc(MEM_PSRAM_SW)` without touching the Rust side.
+Gate 0 put the allocator on the RT-Thread system heap behind a single seam,
+`pjs_host_alloc`. Gate 1A repointed that seam at
+`aic_memheap_malloc(MEM_PSRAM_SW)` without touching the Rust side, so the Rust
+crate is byte-identical across the two gates apart from the added stress entry.
+
+The allocator now refuses to build at all if PSRAM_SW is not a dedicated
+memheap, rather than falling back to CMA or to the 1 MiB SRAM heap:
+
+```c
+#if !defined(AIC_PSRAM_SW_EN) || defined(AIC_DEFAULT_SYS_HEAP_PSRAM)
+#error "PocketJS Gate 1A requires a dedicated PSRAM_SW memheap. ..."
+#endif
+```
+
+The guard tests `AIC_PSRAM_SW_EN` rather than `#ifdef MEM_PSRAM_SW`, because
+`MEM_PSRAM_SW` is an *enumerator*, not a macro - `#ifdef` on it would silently
+be false and the fallback would compile.
 
 ## Gate status
 
 | Gate | Scope | Status |
 |------|-------|--------|
 | 0 | Rust ILP32D toolchain bridge, ABI, allocator | **PASS on hardware** — 47/47 checks, `RESULT PASS`. Two evidence gaps (deliberate panic, post-reset re-run) - see [GATE0-REPORT.md](GATE0-REPORT.md) |
-| 1 | Retained UI core (`no_std` + alloc) | not started |
+| 1A | PSRAM_SW allocator backend + `pjs_mem` / `pjs_mem_test` | **implemented, not hardware validated** — host test 33/33, map statically verified; one efuse-dependent boot path needs a board check - see [GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §5.4 |
+| 1B-1C | Retained UI core (`no_std` + alloc) | not started |
 | 2 | RGB565 software renderer -> AIC framebuffer | not started |
 | 3 | QuickJS-ng guest | not started |
 | 4 | First real PocketJS app (TSX counter) | not started |
@@ -297,6 +335,10 @@ checks. Run 1 is kept in the report because it is what caught the allocator
 defect. The deliberate `pjs_abi_panic` and a post-reset re-run are still
 uncaptured, and are flagged as such rather than assumed.
 
+Gate 1A has not been run on hardware. Until it is, the firmware reports
+`NOT HARDWARE VALIDATED` for it in the gate report, and no UI core, QuickJS,
+framebuffer or GE work starts.
+
 Until Gate 1 is reviewed and passed, the runtime stays a conformance probe: no
 UI core, no QuickJS, no framebuffer, no GE.
 
@@ -307,14 +349,17 @@ ports/artinchip-d13x/                    (PocketJS repo - development home)
 ├── include/pocketjs_d13x.h    C <-> Rust ABI contract (single source of truth)
 ├── src/pocketjs_host.c        host services Rust calls + pjs_abi MSH commands
 ├── src/pocketjs_alloc.c       host allocator, split out so it is host-testable
+├── src/pocketjs_mem.c         pjs_mem / pjs_mem_test (Gate 1A)
+├── src/pocketjs_port.h        port-internal declarations (not part of the ABI)
 ├── rust/
 │   ├── rust-toolchain.toml    pinned toolchain
 │   ├── targets/               d13x-e907-ilp32d.json
-│   └── abi-probe/             Gate 0 Rust crate
+│   └── abi-probe/             Rust crate (ABI probe + allocator stress)
 ├── tools/                     build-native.py, build-firmware.py, apply-sdk.py,
 │                              patch-riscv-attrs.py, check-abi.py,
 │                              check-sdk.py, test-alloc-host.py, portenv.py
 ├── tools/host-test/           stub RT-Thread heap + the allocator test
+│   └── stub/                  rtthread.h/.c, aic_osal.h (MEM_* + memheap)
 ├── sdk/
 │   └── overlay/               files copied into the SDK tree
 └── versions.toml              machine-readable pin
@@ -329,14 +374,21 @@ packages/third-party/pocketjs/           (SDK branch - generated, rebuildable)
 ├── include/pocketjs_d13x.h    vendored copy of the ABI contract
 ├── src/pocketjs_host.c        vendored copy of the host glue
 ├── src/pocketjs_alloc.c       vendored copy of the host allocator
+├── src/pocketjs_mem.c         vendored copy of the memory command
+├── src/pocketjs_port.h        vendored copy of the internal header
 ├── rust/                      vendored crate + JSON target spec
 ├── lib/                       drop-box for libpocketjs_abi_probe.a (git-ignored)
 └── README.md                  what this package is and why
 
-application/rt-thread/pocketjs-smoke/    thin Gate 0 entry point
+application/rt-thread/pocketjs-smoke/    thin firmware entry point
 target/configs/d13x_d50t-2-lite_rt-thread_pocketjs-smoke_defconfig
 packages/third-party/Kconfig             one injected `source` line
 ```
+
+The vendored manifest in `apply-sdk.py` is an explicit list, not a glob. The
+SDK's `SConscript` *does* glob `src/*.c`, so a file missing from the manifest
+would be vendored nowhere and silently absent from the firmware build. Adding a
+source file means adding it in both places.
 
 Validation artifacts (board logs, objdump, readelf dumps, receipts) go to
 `.pocket-build/d13x/validation/<gate>/<run>/` and are never committed.
