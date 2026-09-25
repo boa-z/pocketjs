@@ -335,7 +335,7 @@ be false and the fallback would compile.
 | Gate | Scope | Status |
 |------|-------|--------|
 | 0 | Rust ILP32D toolchain bridge, ABI, allocator | **PASS on hardware** — 47/47 checks, `RESULT PASS`. Two evidence gaps (deliberate panic, post-reset re-run) - see [GATE0-REPORT.md](GATE0-REPORT.md) |
-| 1A | PSRAM_SW allocator backend + `pjs_mem` / `pjs_mem_test` | **one hardware run, `RESULT FAIL` on one check; fixed and rebuilt, awaiting re-run** — host test 43/43, map statically verified. Run 1 passed 24/25 and confirmed the memory plan, the efuse path and the Gate 0 regression; it failed `test.region_lo` on a telemetry defect in the port's own code. See [GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §10, §11 |
+| 1A | PSRAM_SW allocator backend + `pjs_mem` / `pjs_mem_test` | **PASS on hardware** — `pass=26 fail=0`, `RESULT PASS`, with the Gate 0 regression re-confirmed at 47/47. Run 1 found one telemetry defect in the port's own code (`test.region_lo`); fixed, rebuilt and re-run clean. See [GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §10, §11 |
 | 1B-1C | Retained UI core (`no_std` + alloc) | not started |
 | 2 | RGB565 software renderer -> AIC framebuffer | not started |
 | 3 | QuickJS-ng guest | not started |
@@ -349,17 +349,22 @@ checks. Run 1 is kept in the report because it is what caught the allocator
 defect. The deliberate `pjs_abi_panic` and a post-reset re-run are still
 uncaptured, and are flagged as such rather than assumed.
 
-Gate 1A has been on hardware once, and did **not** pass: 24 of 25 checks, with
-`test.region_lo` failing because the payload range was never seeded - the target
-never called the stats reset that installed the sentinel. Every substantive
-property the gate exists to prove did hold on silicon (allocations in PSRAM_SW,
-SRAM heap flat, alignment, Box/Vec/String over 1000 rounds, Rust and C checksums
-agreeing), and §5.4's efuse hazard turned out not to be live on this board. The
-fix is built and host-tested; Gate 1A passes when the re-run prints
-`RESULT PASS`, and not before.
+Gate 1A passed on real silicon too, in two runs. Run 1 confirmed the memory plan
+(allocations in PSRAM_SW, SRAM heap flat, alignment, Box/Vec/String over 1000
+rounds, Rust and C checksums agreeing) and showed that §5.4's efuse hazard is not
+live on this board — but failed `test.region_lo`, because the payload range was
+never seeded: the target never called the stats reset that installed the sentinel.
+That was a defect in the port's own telemetry, not in the memory plan. Fixed,
+rebuilt, and re-run: `pass=26 fail=0`, `RESULT PASS`.
+
+The interesting part of run 1 is why the host test had missed it — it called the
+stats reset before its assertions, so it was testing a state the firmware never
+runs in. `range_tracking_is_correct()` now covers that path, and the check was
+verified by mutation: restoring the old logic makes it fail.
 
 Until Gate 1 is reviewed and passed, the runtime stays a conformance probe: no
-UI core, no QuickJS, no framebuffer, no GE.
+UI core, no QuickJS, no framebuffer, no GE. Gate 1A passing is the allocator
+half of that; Gate 1B–1C (the retained UI core) is next and has not started.
 
 ## Directory map
 
