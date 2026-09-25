@@ -323,8 +323,8 @@ differing only in `CONFIG_PRJ_DEFCONFIG_FILENAME`.
 ```
 
 The four changed translation units all rebuilt (`main.c`, `pocketjs_alloc.c`,
-`pocketjs_host.c`, `pocketjs_mem.c`), and the Gate 1A symbols are all present in
-the linked image:
+`pocketjs_mem.c`, and the Rust `abi-probe/src/lib.rs`), and the Gate 1A symbols
+are all present in the linked image:
 
 ```
 pjs_mem_report          0x4001e8c4
@@ -353,7 +353,7 @@ __psram_sw_heap_end   = 0x41000000
 __heap_start/__heap_end = 0x30040000 / 0x30140000   (SRAM, unchanged)
 ```
 
-Firmware, this build:
+Firmware, the `-g1a` build:
 
 ```
 d13x.bin   230,432 B   sha256 03d97f42…
@@ -362,6 +362,36 @@ d13x.elf 3,574,240 B   sha256 64efdc9a…
 
 `aic_memheap_free` was previously *not* linked (nothing called it); it is now,
 which is the expected consequence of the backend swap.
+
+#### 6.1.1 Rebuilt at a clean revision
+
+The `-g1a` firmware above was produced while this document and the port
+`README.md` were still uncommitted, so the generated `pocketjs_build.h` — and
+therefore the boot banner — read `940c7f7-dirty`. That is not a good artifact to
+hand to someone with a board: the banner would not match a commit.
+
+Both documents were committed (`940c7f7`, then `ba2ea02`), the generated header
+was re-synced, and the build was repeated under a third scratch name
+(`pocketjs-g1b`). Same 157 objects, `0` safe-delete hits, and this time the
+banner is exactly the revision:
+
+```
+$ strings -a d13x.bin | grep -A1 'PocketJS D13x port'
+PocketJS D13x port - Gate 1A firmware (Retained UI Core: allocator)
+ba2ea02
+```
+
+Final Gate 1A firmware — **this is the artifact to flash**:
+
+```
+d13x.bin   230,432 B   sha256 c1d2c450…
+d13x.elf 3,574,240 B   sha256 acaa0f26…
+d13x.map 1,841,744 B   sha256 adb40e15…
+d13x_D50T-2-Lite_page_2k_block_128k_v1.0.0.img  833,024 B  sha256 1498e016…
+```
+
+`d13x.bin` and `d13x.elf` are byte-identical in size to the `-g1a` build and
+differ only by the embedded revision string, which is the expected delta.
 
 ---
 
@@ -381,6 +411,8 @@ which is the expected consequence of the backend swap.
 - Gate 1A is **implemented and built**: the allocator backend is
   `aic_memheap_malloc(MEM_PSRAM_SW)`, `pjs_mem` and `pjs_mem_test` are linked,
   and the host test passes 33/33 including the region contract.
+- The flashable artifact is built at a **clean revision**: the boot banner reads
+  `ba2ea02`, matching the committed tree (§6.1.1).
 
 **NOT HARDWARE VALIDATED.** Nothing in this document is a measurement from a
 running board. Everything is a reading from the linked image, the resolved
@@ -473,9 +505,20 @@ application/baremetal/bootloader/ldscript/d13x_bootloader_gcc.ld   (bootloader r
 kernel/rt-thread/src/memheap.c                                     (alignment guarantee)
 SConstruct                                                         (lines 84-88)
 
-output/d13x_d50t-2-lite_rt-thread_pocketjs-g1a/images/d13x.map      (Gate 1A link)
+output/d13x_d50t-2-lite_rt-thread_pocketjs-g1a/images/d13x.map      (Gate 1A link, 940c7f7-dirty)
+output/d13x_d50t-2-lite_rt-thread_pocketjs-g1b/images/d13x.map      (Gate 1A link, ba2ea02 - the artifact)
 output/d13x_d50t-2-lite_rt-thread_pocketjs-g1verify/images/d13x.map (8 MiB split, no Gate 1A code)
 output/d13x_d50t-2-lite_rt-thread_pocketjs-smoke/images/d13x.map    (Gate 0 link)
+```
+
+Per-run captures (not committed — `.pocket-build/` is git-ignored):
+
+```
+.pocket-build/d13x/validation/gate1a/20260925T085829-build-ba2ea02/
+    d13x.bin  d13x.elf  d13x.map  d13x_D50T-2-Lite_page_2k_block_128k_v1.0.0.img
+    sha256.txt  REVISION.txt
+.pocket-build/d13x/validation/gate1a/20260925T085400-build-SUPERSEDED-dirty-940c7f7/
+    (kept for the record; SUPERSEDED.txt explains why)
 ```
 
 The `d13x` linker script and `board.c` are shared across the D13x family, so
