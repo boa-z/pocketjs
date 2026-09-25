@@ -72,6 +72,28 @@ typedef struct pjs_abi_alloc_report {
     uint32_t peak_bytes;
 } pjs_abi_alloc_report_t;
 
+/* Gate 1A: result of the repeated Box/Vec/String exercise.
+ *
+ * Separate from pjs_abi_alloc_report_t because it answers a different question.
+ * Gate 0 asked "does one allocation of each kind work?". Gate 1A asks "does
+ * thousands of them, in sequence, on a heap that is 8 MiB instead of 1 MiB,
+ * leave nothing behind?".
+ *
+ * Every `*_ok` is 1 only if *all* rounds held; `checksum` folds the data of
+ * every round so a single corrupted round cannot hide. */
+typedef struct pjs_abi_stress_report {
+    uint32_t rounds;        /* rounds actually completed                     */
+    uint32_t box_ok;
+    uint32_t vec_ok;
+    uint32_t string_ok;
+    uint32_t checksum;      /* fold of every round's box value, vec sum, hash */
+    uint32_t live_bytes;    /* must be 0 once every round has been dropped    */
+    uint32_t peak_bytes;
+    uint32_t alloc_count;
+    uint32_t free_count;
+    uint32_t fail_count;
+} pjs_abi_stress_report_t;
+
 /* ------------------------------------------------------------------ *
  * Direction 1: C -> Rust. Implemented in Rust, called from C.
  * ------------------------------------------------------------------ */
@@ -106,6 +128,12 @@ uint32_t pjs_probe_log_len(const char *msg, uint32_t len);
 
 /* Exercise Box + Vec + String through the Rust GlobalAlloc. */
 void pjs_probe_alloc(pjs_abi_alloc_report_t *out);
+
+/* Gate 1A: run `iters` rounds of Box + Vec + String, each dropped before the
+ * next round begins, and report both the data integrity and the allocator
+ * counters. Varying sizes per round, so this is a real alloc/free cycle rather
+ * than the same block handed back repeatedly. */
+void pjs_probe_alloc_stress(uint32_t iters, pjs_abi_stress_report_t *out);
 
 /* Read back the allocator telemetry counters. */
 void pjs_probe_mem_stats(uint32_t *live_bytes, uint32_t *peak_bytes, uint32_t *alloc_count,

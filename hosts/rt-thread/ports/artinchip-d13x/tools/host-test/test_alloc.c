@@ -6,6 +6,11 @@
  * can be tested here against a stubbed heap - no board required - and this test
  * is the regression guard for it.
  *
+ * Gate 1A added a second thing to guard: the backend moved from rt_malloc to
+ * aic_memheap_malloc(MEM_PSRAM_SW). The alignment arithmetic must be unchanged,
+ * and the allocator must never ask for CMA or the system heap. Both are checked
+ * below; the second one is what region_contract() is for.
+ *
  * Run: python tools/test-alloc-host.py
  */
 #include <stdint.h>
@@ -13,7 +18,9 @@
 #include <string.h>
 
 #include "rtthread.h"        /* the stub: RT_ALIGN_SIZE, rt_malloc, heap probes */
-#include "pocketjs_d13x.h"   /* the real contract: pjs_host_alloc/free */
+#include "aic_osal.h"        /* the stub: MEM_PSRAM_SW, region counters        */
+#include "pocketjs_d13x.h"   /* the real contract: pjs_host_alloc/free         */
+#include "pocketjs_port.h"   /* the real allocator's telemetry                 */
 
 static int failures;
 static int checks;
@@ -89,7 +96,7 @@ static void sweep_size_and_align(void)
     }
     check(pjs_test_heap_live_blocks() == 0, "no blocks left live");
     check(pjs_test_heap_live_bytes() == 0, "no bytes left live");
-    check(pjs_test_heap_bad_frees() == 0, "every free matched a block rt_malloc issued");
+    check(pjs_test_heap_bad_frees() == 0, "every free matched a block the allocator issued");
 }
 
 /* The exact case the board failed on: align 8 on a 4-aligned heap. */
@@ -199,6 +206,86 @@ static void degenerate_inputs(void)
     check(pjs_test_heap_bad_frees() == 0, "the refusals did not disturb the heap");
 }
 
+/* Gate 1A: every PocketJS allocation must come from the PSRAM_SW memheap.
+ *
+ * Checked here rather than only on the board because it is a property of *which
+ * entry point the allocator calls*, not of the hardware. pjs_mem_test asks where
+ * the pointers landed; this asks which heap was asked. Neither alone is enough:
+ * a pointer can be inside the right region while having been obtained from the
+ * wrong heap if the two happen to be adjacent.
+ *
+ * This is the regression guard for the backend swap. If someone puts rt_malloc
+ * back, `allocs_via_default` goes non-zero and this fails.
+ */
+static void region_contract(void)
+{
+    void *p4;
+    void *p64;
+
+    printf("-- Gate 1A region contract (PSRAM_SW only, never CMA / system heap) --\n");
+    pjs_test_heap_reset();
+
+    p4 = pjs_host_alloc(37, 4u);    /* the fast path: one heap call */
+    p64 = pjs_host_alloc(37, 64u);  /* the over-aligned path: also one heap call */
+    check(p4 != NULL && p64 != NULL,
+          "both the fast path and the over-aligned path allocated");
+
+    check(pjs_test_allocs_via_psram_sw() == 2u,
+          "both allocations went through MEM_PSRAM_SW");
+    check(pjs_test_allocs_via_other_region() == 0u,
+          "nothing went to MEM_CMA or any other named region");
+    check(pjs_test_allocs_via_default() == 0u,
+          "nothing fell back to the system heap");
+
+    pjs_host_free(p4, 4u);
+    pjs_host_free(p64, 64u);
+    check(pjs_test_frees_via_psram_sw() == 2u, "both frees went back to MEM_PSRAM_SW");
+    check(pjs_test_frees_via_other_region() == 0u, "no free was directed elsewhere");
+    check(pjs_test_heap_bad_frees() == 0, "both frees matched their original blocks");
+    check(pjs_test_heap_live_blocks() == 0, "no blocks left live");
+}
+
+/* The region check itself.
+ *
+ * A check that can only be taken on faith is not a check. On the board the
+ * PSRAM_SW window is real and this is the path that catches a mis-partitioned
+ * region; here the window is a variable, so narrowing it is the only way to see
+ * that path run at all.
+ *
+ * Also confirms the refusal does not leak: a block that was allocated and then
+ * rejected for being outside the region must go back to the heap.
+ */
+static void region_window_is_enforced(void)
+{
+    pjs_heap_stats_t st;
+    void *p;
+
+    printf("-- region window is enforced --\n");
+    pjs_test_heap_reset();
+    pjs_host_alloc_stats_reset();
+
+    /* A window the stub heap cannot possibly hand out a block inside. */
+    pjs_host_test_region_lo = (uintptr_t)0x10000000u;
+    pjs_host_test_region_hi = (uintptr_t)0x10000100u;
+
+    p = pjs_host_alloc(16, 4u);
+    check(p == NULL, "an allocation outside the region is refused");
+    check(pjs_test_heap_live_blocks() == 0,
+          "the refused block went back to the heap, not leaked");
+
+    pjs_host_alloc_stats(&st);
+    check(st.out_of_region == 1u, "the refusal is counted as out-of-region");
+    check(st.allocs == 0u, "a refused allocation is not counted as a success");
+
+    /* Restore, and confirm the allocator is not left stuck in a bad state. */
+    pjs_host_test_region_lo = 0;
+    pjs_host_test_region_hi = ~(uintptr_t)0;
+    p = pjs_host_alloc(16, 4u);
+    check(p != NULL, "with the window restored, allocation succeeds again");
+    pjs_host_free(p, 4u);
+    check(pjs_test_heap_live_blocks() == 0, "no blocks left live at the end");
+}
+
 int main(void)
 {
     printf("PocketJS D13x host allocator test (stubbed RT-Thread heap, RT_ALIGN_SIZE=%d)\n\n",
@@ -213,6 +300,10 @@ int main(void)
     adjacent_over_aligned_blocks();
     printf("\n");
     degenerate_inputs();
+    printf("\n");
+    region_contract();
+    printf("\n");
+    region_window_is_enforced();
 
     printf("\n%d checks, %d failure(s)\n", checks, failures);
     if (failures == 0) {
