@@ -16,6 +16,10 @@
  * What Gate 1A has to prove, and where each line comes from:
  *
  *   Rust allocations land in PSRAM_SW     - pjs_host_alloc's region counters
+ *   ...every one of them                  - min/max payload addresses, which
+ *                                           are seeded by the first allocation
+ *                                           rather than by a sentinel, because
+ *                                           the target never calls the reset
  *   ...and not in the 1 MiB SRAM heap     - rt_memory_info() before/after
  *   ...and not in CMA                     - the memheap PSRAM_SW grew, CMA did not
  *   align 4/8/16/32/64 are honoured       - pjs_host_alloc() called directly
@@ -156,8 +160,17 @@ int pjs_mem_report(void)
     rt_kprintf(PJS_TAG "  allocs=%u frees=%u fails=%u bad_align=%u out_of_region=%u\n",
                (unsigned)st.allocs, (unsigned)st.frees, (unsigned)st.fails,
                (unsigned)st.bad_align, (unsigned)st.out_of_region);
-    rt_kprintf(PJS_TAG "  max_request=%u  payload range=%p .. %p\n",
-               (unsigned)st.max_size, (void *)st.lo, (void *)st.hi);
+    rt_kprintf(PJS_TAG "  max_request=%u\n", (unsigned)st.max_size);
+    /* Nothing resets these counters, so the range is the min/max over every
+     * allocation the firmware has ever made. With no samples there is no range
+     * to print - say so, rather than print the empty encoding as if it were an
+     * address (which is how a zero low bound once read as 0x00000000). */
+    if (st.allocs > 0u) {
+        rt_kprintf(PJS_TAG "  payload range=%p .. %p\n",
+                   (void *)st.lo, (void *)st.hi);
+    } else {
+        rt_kprintf(PJS_TAG "  payload range=(no allocations yet)\n");
+    }
 
     report("mem.psram_sw_registered", psram_sw != RT_NULL);
     report("mem.psram_sw_nonzero", psram_sw != RT_NULL && psram_sw->pool_size > 0u);
@@ -379,11 +392,23 @@ int pjs_mem_test(uint32_t iters)
     rt_kprintf(PJS_TAG "  psram : pool=%u used=%u max=%u free=%u\n",
                (unsigned)sw_total, (unsigned)sw_used, (unsigned)sw_max,
                (unsigned)(sw_total - sw_used));
-    rt_kprintf(PJS_TAG "  host  : allocs=%u frees=%u fails=%u out_of_region=%u\n",
-               (unsigned)st_after.allocs, (unsigned)st_after.frees,
-               (unsigned)st_after.fails, (unsigned)st_after.out_of_region);
-    rt_kprintf(PJS_TAG "  host  : payload range=%p .. %p\n",
-               (void *)st_after.lo, (void *)st_after.hi);
+    /* Cumulative, not per-run: nothing resets the host counters, so the range
+     * below covers every allocation the firmware has made - which is what makes
+     * the region_lo/region_hi assertions below a statement about the whole boot
+     * and not just about this test. Printing before -> after as well keeps the
+     * test's own share of the traffic visible. */
+    rt_kprintf(PJS_TAG "  host  : allocs %u -> %u   frees %u -> %u   (before -> after)\n",
+               (unsigned)st_before.allocs, (unsigned)st_after.allocs,
+               (unsigned)st_before.frees, (unsigned)st_after.frees);
+    rt_kprintf(PJS_TAG "  host  : fails=%u out_of_region=%u bad_align=%u\n",
+               (unsigned)st_after.fails, (unsigned)st_after.out_of_region,
+               (unsigned)st_after.bad_align);
+    if (st_after.allocs > 0u) {
+        rt_kprintf(PJS_TAG "  host  : payload range=%p .. %p  (cumulative)\n",
+                   (void *)st_after.lo, (void *)st_after.hi);
+    } else {
+        rt_kprintf(PJS_TAG "  host  : payload range=(no allocations)\n");
+    }
 
     /* The positive proof: PSRAM_SW's high-water mark must have moved by at
      * least what Rust says it allocated. If it did not, the allocations went
@@ -399,9 +424,17 @@ int pjs_mem_test(uint32_t iters)
     report("test.sram_used_flat", sys_used_after <= sys_used_before);
     report("test.sram_max_flat", sys_max_after <= sys_max_before);
 
-    /* Every payload, for the whole life of the firmware, inside PSRAM_SW. */
-    report("test.region_lo", st_after.lo >= lo);
-    report("test.region_hi", st_after.hi <= hi);
+    /* Every payload, for the whole life of the firmware, inside PSRAM_SW.
+     *
+     * Guarded on allocs > 0: with no samples the range is the empty encoding
+     * (0,0) and a comparison against it would fail for a reason that has
+     * nothing to do with where anything landed. range_seeded makes that
+     * distinction explicit, so a report of (no allocations) reads as such
+     * instead of as a low bound of 0x00000000. */
+    report("test.range_seeded",
+           st_after.allocs > 0u && st_after.lo != 0u && st_after.lo <= st_after.hi);
+    report("test.region_lo", st_after.allocs > 0u && st_after.lo >= lo);
+    report("test.region_hi", st_after.allocs > 0u && st_after.hi <= hi);
     report("test.no_out_of_region", st_after.out_of_region == 0u);
     report("test.no_bad_align", st_after.bad_align == 0u);
 
