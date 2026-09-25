@@ -80,6 +80,22 @@ pub struct AbiAllocReport {
     pub peak_bytes: u32,
 }
 
+/// Gate 1A. Mirrored by `pjs_abi_stress_report_t` in include/pocketjs_d13x.h.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct AbiStressReport {
+    pub rounds: u32,
+    pub box_ok: u32,
+    pub vec_ok: u32,
+    pub string_ok: u32,
+    pub checksum: u32,
+    pub live_bytes: u32,
+    pub peak_bytes: u32,
+    pub alloc_count: u32,
+    pub free_count: u32,
+    pub fail_count: u32,
+}
+
 // Compile-time proof of the layout this port assumes. If the custom target
 // JSON ever drifts (for example losing `+d`, which would drop f64 alignment to
 // 4), the build fails here instead of corrupting memory on the board.
@@ -370,6 +386,94 @@ pub extern "C" fn pjs_probe_alloc(out: *mut AbiAllocReport) {
 
     r.live_bytes = LIVE_BYTES.load(Ordering::Relaxed);
     r.peak_bytes = PEAK_BYTES.load(Ordering::Relaxed);
+    unsafe { out.write(r) };
+}
+
+/// Gate 1A: `iters` rounds of Box + Vec + String through the global allocator.
+///
+/// Sizes vary per round, so this is a real alloc/free cycle rather than the same
+/// block handed back repeatedly: a heap that never coalesces, or a header
+/// misplaced by the over-alignment path, shows up as growing `live_bytes` or a
+/// non-zero `fail_count` instead of passing.
+///
+/// Each round's data is folded into `checksum` so that a single corrupted round
+/// cannot hide behind a good one. The C side recomputes the same fold from
+/// scratch - the same technique the Gate 0 probe uses for its Vec sum and String
+/// hash, and for the same reason: agreement between two independent computations
+/// is evidence, agreement with itself is not.
+///
+/// `String` growth is included on purpose. It goes through `realloc`, which the
+/// default `GlobalAlloc` implementation serves as alloc + copy + dealloc, so it
+/// exercises both paths and the over-alignment header in one operation.
+#[no_mangle]
+pub extern "C" fn pjs_probe_alloc_stress(iters: u32, out: *mut AbiStressReport) {
+    if out.is_null() {
+        return;
+    }
+    let mut r = AbiStressReport {
+        box_ok: 1,
+        vec_ok: 1,
+        string_ok: 1,
+        ..AbiStressReport::default()
+    };
+
+    let mut i: u32 = 0;
+    while i < iters {
+        // Box: a value that depends on the round, so a stale reuse is caught.
+        let want_box = i.wrapping_mul(2_654_435_761) ^ 0x9E37_79B9;
+        let b = Box::new(want_box);
+        if *b != want_box {
+            r.box_ok = 0;
+        }
+        drop(b);
+
+        // Vec: length varies 1..=64, so the heap sees many distinct sizes.
+        let n = (i % 64) + 1;
+        let mut v: Vec<u32> = Vec::with_capacity(n as usize);
+        let mut vsum: u32 = 0;
+        let mut k: u32 = 0;
+        while k < n {
+            let x = k.wrapping_mul(i).wrapping_add(0x1234_5678);
+            v.push(x);
+            vsum = vsum.wrapping_add(x);
+            k += 1;
+        }
+        if v.len() as u32 != n {
+            r.vec_ok = 0;
+        }
+        if v.iter().fold(0u32, |a, &x| a.wrapping_add(x)) != vsum {
+            r.vec_ok = 0;
+        }
+        drop(v);
+
+        // String: length varies 1..=40.
+        let slen = (i % 40) + 1;
+        let mut s = String::new();
+        let mut k: u32 = 0;
+        while k < slen {
+            s.push((b'a' + (k % 26) as u8) as char);
+            k += 1;
+        }
+        if s.len() as u32 != slen {
+            r.string_ok = 0;
+        }
+        let shash = fnv1a(s.as_bytes());
+        drop(s);
+
+        r.checksum = r
+            .checksum
+            .wrapping_mul(31)
+            .wrapping_add(want_box ^ vsum ^ shash);
+
+        r.rounds += 1;
+        i += 1;
+    }
+
+    r.live_bytes = LIVE_BYTES.load(Ordering::Relaxed);
+    r.peak_bytes = PEAK_BYTES.load(Ordering::Relaxed);
+    r.alloc_count = ALLOC_COUNT.load(Ordering::Relaxed);
+    r.free_count = FREE_COUNT.load(Ordering::Relaxed);
+    r.fail_count = FAIL_COUNT.load(Ordering::Relaxed);
     unsafe { out.write(r) };
 }
 

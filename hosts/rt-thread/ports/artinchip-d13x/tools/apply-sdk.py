@@ -49,6 +49,12 @@ VENDORED = {
     PKG_REL / "include" / "pocketjs_d13x.h": env.PORT_ROOT / "include" / "pocketjs_d13x.h",
     PKG_REL / "src" / "pocketjs_host.c": env.PORT_ROOT / "src" / "pocketjs_host.c",
     PKG_REL / "src" / "pocketjs_alloc.c": env.PORT_ROOT / "src" / "pocketjs_alloc.c",
+    # Gate 1A. The manifest is explicit rather than a glob on purpose - the
+    # package is vendored so the SDK branch is self-contained, and a silent glob
+    # would vendor whatever happened to be lying in src/. Adding a file here is
+    # the deliberate step; forgetting it is what this comment is for.
+    PKG_REL / "src" / "pocketjs_mem.c": env.PORT_ROOT / "src" / "pocketjs_mem.c",
+    PKG_REL / "src" / "pocketjs_port.h": env.PORT_ROOT / "src" / "pocketjs_port.h",
     PKG_REL / "rust" / "rust-toolchain.toml": env.PORT_ROOT / "rust" / "rust-toolchain.toml",
     PKG_REL / "rust" / "targets" / "d13x-e907-ilp32d.json":
         env.PORT_ROOT / "rust" / "targets" / "d13x-e907-ilp32d.json",

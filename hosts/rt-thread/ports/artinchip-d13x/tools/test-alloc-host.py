@@ -62,9 +62,17 @@ def main() -> int:
         "-Wextra",
         "-O1",
         "-g",
-        # <rtthread.h> resolves to the stub, never to the SDK's real header.
+        # Tells src/pocketjs_alloc.c it is being built for the host test: the
+        # PSRAM_SW bounds widen to the whole address space, because there is no
+        # PSRAM_SW here. Everything else in that file is unchanged - see the
+        # comment on PJS_REGION_LO. The backend contract is still checked, via
+        # the region counters in the stub.
+        "-DPJS_HOST_TEST=1",
+        # <rtthread.h> and <aic_osal.h> resolve to the stubs, never to the
+        # SDK's real headers.
         f"-I{STUB_DIR}",
         f"-I{pe.PORT_ROOT / 'include'}",
+        f"-I{pe.PORT_ROOT / 'src'}",
         *[str(s) for s in SOURCES],
         "-o",
         str(exe),
