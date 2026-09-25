@@ -400,7 +400,7 @@ PocketJS D13x port - Gate 1A firmware (Retained UI Core: allocator)
 ba2ea02
 ```
 
-Final Gate 1A firmware — **this is the artifact to flash**:
+The run-1 Gate 1A firmware — **flashed, and what run 1 found is in §10**:
 
 ```
 d13x.bin   230,432 B   sha256 c1d2c450…
@@ -411,6 +411,8 @@ d13x_D50T-2-Lite_page_2k_block_128k_v1.0.0.img  833,024 B  sha256 1498e016…
 
 `d13x.bin` and `d13x.elf` are byte-identical in size to the `-g1a` build and
 differ only by the embedded revision string, which is the expected delta.
+
+For the re-run, use the `6917bee` build in §11 — this one fails `test.region_lo`.
 
 The pin is on the revision the binary was **built from** (`ba2ea02`), not on
 `HEAD`. Committing this document afterwards moves `HEAD` but does not change the
@@ -433,41 +435,55 @@ binary, so it does not invalidate the pin. Only a source change does.
   cleared (§5.5).
 - Gate 1A is **implemented and built**: the allocator backend is
   `aic_memheap_malloc(MEM_PSRAM_SW)`, `pjs_mem` and `pjs_mem_test` are linked,
-  and the host test passes 33/33 including the region contract.
+  and the host test passes 43/43 including the region contract and the payload
+  range guard.
 - The flashable artifact is built at a **clean revision**: the boot banner reads
-  `ba2ea02`, matching the committed tree (§6.1.1).
+  `6917bee`, matching the committed tree (§11).
 
-**NOT HARDWARE VALIDATED.** Nothing in this document is a measurement from a
-running board. Everything is a reading from the linked image, the resolved
-config, or the SDK source.
+**Run 1 has been on hardware (§10).** The board answered the open questions:
 
-**Open, board-side — this is what remains:**
+- §5.4 — the efuse path is **fine**: `efuse=16 MiB, linked=16 MiB`. The hazard
+  was real but is not live on this board.
+- The Gate 0 regression is **clean**: `pjs_abi` 47/47, `RESULT PASS`, through the
+  new backend.
+- Every substantive Gate 1A property **held**: allocations in PSRAM_SW
+  (`out_of_region=0`), SRAM heap flat, alignment 4/8/16/32/64, Box/Vec/String
+  over 1000 rounds, Rust and C checksums agreeing, `live=0 fails=0`.
+- One check failed: `test.region_lo`, because the port's own telemetry never
+  seeded its low bound. Diagnosed and fixed in §10.6.
 
-1. §5.4 — the efuse-dependent `aic_memheap_init()` path. The boot banner now
-   prints `efuse=<n> MiB, linked=16 MiB`, so the first boot either shows `16`
-   (good) or does not reach the banner at all (the assert fired before `main`).
-2. `pjs_mem_test` — the Gate 1A assertion. Must end `RESULT PASS` with
-   `out_of_region=0`, `live=0`, `fails=0`, and `sram max` unchanged.
-3. `pjs_mem` — the heap map, for the record.
-4. The Gate 0 regression: `pjs_abi` now allocates through PSRAM_SW, so it must
-   still print 47/47 and `RESULT PASS`.
+**NOT HARDWARE VALIDATED.** Run 1 ended `RESULT FAIL`, so Gate 1A has not
+passed; a failing gate is fixed and re-run, not explained away. The fix is built
+(§11) but has not been on a board.
 
-Until those are captured, the correct statement is: **Gate 1A is implemented and
-statically verified, and not hardware validated.**
+**What remains — one re-run:**
+
+1. Flash the `6917bee` image (§11) and confirm `pjs_mem_test` prints
+   `SUMMARY pass=25 fail=0` / `RESULT PASS`, with `test.region_lo` now passing
+   and the low bound an address inside PSRAM_SW rather than `0x00000000`.
+2. Re-confirm `efuse=16 MiB, linked=16 MiB`, `pjs_abi` 47/47, and SRAM flat —
+   the whole firmware changed, so the run-1 confirmations are re-established,
+   not carried over.
+3. `pjs_mem` for the record, and `pjs_abi_panic` last if you want to close the
+   last Gate 0 evidence gap (it halts the board).
+
+Until that re-run is captured, the correct statement is: **Gate 1A is
+implemented, statically verified, and has had one hardware run that found and
+localised a telemetry defect; it is not yet hardware validated.**
 
 ---
 
 ## 8. On-target procedure
 
 Serial 115200 8N1. Both probes run automatically at boot, so a single console
-capture covers items 1–4 above. Expect, in order:
+capture covers the whole re-run. Expect, in order:
 
 ```
 PocketJS D13x port - Gate 1A firmware (Retained UI Core: allocator)
   board    : d50t-2-lite (D133ECS, Xuantie E907FDP)
   abi      : RV32IMAFDC / ILP32D hard-float
-  rev      : <port revision>
-  psram    : efuse=16 MiB, linked=16 MiB          <- §5.4, must be 16/16
+  rev      : 6917bee                              <- must match §11
+  psram    : efuse=16 MiB, linked=16 MiB          <- §5.4; run 1 already saw 16/16
   runtime  : packages/third-party/pocketjs
   commands : pjs_abi, pjs_mem, pjs_mem_test [rounds], pjs_abi_panic
 
@@ -476,7 +492,7 @@ PocketJS D13x port - Gate 1A firmware (Retained UI Core: allocator)
 
 [pjs-mem] PocketJS D13x - Gate 1A PSRAM_SW allocator test
 [pjs-mem] sram before: total=... used=... max=...
-[pjs-mem] region     : 0x40800000 .. 0x41000000  (8388608 B)
+[pjs-mem] region     : 40800000 .. 41000000  (8388608 B)
 [pjs-mem] iters      : 1000
 [pjs-mem] PASS  test.align4 ... test.align64
 [pjs-mem] PASS  test.box / test.vec / test.string
@@ -485,12 +501,20 @@ PocketJS D13x port - Gate 1A firmware (Retained UI Core: allocator)
 [pjs-mem]       live=0 peak=... allocs=... frees=... fails=0
 [pjs-mem] PASS  test.psram_sw_carried_the_load
 [pjs-mem] PASS  test.sram_used_flat / test.sram_max_flat
-[pjs-mem] SUMMARY pass=... fail=0
+[pjs-mem]   host  : payload range=40800000 .. ...   (cumulative)
+[pjs-mem] PASS  test.range_seeded
+[pjs-mem] PASS  test.region_lo
+[pjs-mem] PASS  test.region_hi
+[pjs-mem] SUMMARY pass=25 fail=0
 [pjs-mem] RESULT PASS
 ```
 
-Two things are worth reading carefully rather than just checking for `PASS`:
+Three things are worth reading carefully rather than just checking for `PASS`:
 
+- `payload range` — the low bound must be an address **inside PSRAM_SW**, not
+  `0x00000000`. `40800000` is expected, because PSRAM_SW's heap starts exactly at
+  the region start. This is the check run 1 failed (§10), so it is the one to
+  look at first, not the `SUMMARY` line.
 - `test.psram_sw_carried_the_load` is the *positive* proof: PSRAM_SW's
   `max_used` must have moved by at least Rust's reported peak. If it did not, the
   allocations went somewhere else.
@@ -547,3 +571,245 @@ Per-run captures (not committed — `.pocket-build/` is git-ignored):
 The `d13x` linker script and `board.c` are shared across the D13x family, so
 other D13x boards may well have a non-zero `PSRAM_SW`; **this** board's baseline
 sets it to zero.
+
+---
+
+## 10. Hardware run 1 — the substantive result passes, one check does not
+
+Flashed the `ba2ea02` artifact (§6.1.1). Serial 115200 8N1, both probes autorun.
+
+### 10.1 Boot
+
+```
+PocketJS D13x port - Gate 1A firmware (Retained UI Core: allocator)
+  board    : d50t-2-lite (D133ECS, Xuantie E907FDP)
+  abi      : RV32IMAFDC / ILP32D hard-float
+  rev      : ba2ea02
+  psram    : efuse=16 MiB, linked=16 MiB
+  runtime  : packages/third-party/pocketjs
+  commands : pjs_abi, pjs_mem, pjs_mem_test [rounds], pjs_abi_panic
+```
+
+**`efuse=16 MiB, linked=16 MiB` — §5.4 did not materialise.** The efuse reports
+the real 16 MiB, so `aic_get_ram_size() - AIC_PSRAM_SIZE == 0`, the PSRAM_SW heap
+end is not adjusted, and `RT_ASSERT(end > begin)` holds. The boot hazard was real
+but is not live on this board. The banner is what answered it; the check cost one
+line and one boot.
+
+### 10.2 Gate 0 regression — clean
+
+```
+[pjs-abi] SUMMARY pass=47 fail=0
+[pjs-abi] RESULT PASS
+```
+
+All 47 Gate 0 checks still pass with the allocator moved to PSRAM_SW, including
+`alloc.align8`, `host.alloc_align4/8/64` and `live=0 peak=256 allocs=5 frees=5
+fails=0`. The backend swap did not disturb the ABI or the alignment arithmetic,
+which is the point of having left the shim byte-identical.
+
+### 10.3 Gate 1A — 24 pass, 1 fail
+
+```
+[pjs-mem] RESULT FAIL
+[pjs-mem] FAIL  test.region_lo
+```
+
+Everything the gate exists to prove passed:
+
+| Claim | Evidence |
+|-------|----------|
+| allocations land in PSRAM_SW | `out_of_region=0`, `payload range=… .. 40800118` |
+| not in the 1 MiB SRAM heap | `sram : used 22556 -> 22556  max 22556 -> 22556` |
+| PSRAM_SW carried the load | `test.psram_sw_carried_the_load` (pool 8388608, max 328 ≥ peak 256) |
+| align 4/8/16/32/64 | `test.align4 … test.align64` |
+| Box / Vec / String | `test.box`, `test.vec`, `test.string`, `test.box_f64_align8`, `test.over_aligned_64` |
+| 1000 rounds, no leak | `rounds=1000 live=0 fails=0 allocs=4610 frees=4610` |
+| Rust and C agree | `checksum=0x8081dab0 want=0x8081dab0` |
+| live memheap matches the link | `psram : pool=8388608` |
+
+The single failure was `test.region_lo`, and the tell is in the line above it:
+
+```
+[pjs-mem]   host  : payload range=00000000 .. 40800118
+```
+
+The **high** bound is right. The **low** bound is `0x00000000`, which is not an
+address in PSRAM_SW and is not an address anything could have been allocated at.
+
+### 10.4 Diagnosis
+
+Not the region check — that is `out_of_region`, and it stayed 0. The *reported*
+low bound was never written:
+
+```c
+/* pocketjs_alloc.c, before */
+void pjs_host_alloc_stats_reset(void) { … g_stats.lo = PJS_REGION_HI; … }
+
+static void *pjs_account(void *payload, uint32_t size) {
+    g_stats.allocs++;
+    if (lo < g_stats.lo) { g_stats.lo = lo; }   /* can only ever lower */
+    …
+}
+```
+
+`g_stats` is a static struct, so it is zero-initialised: `lo = 0`. Nothing can be
+lower than 0, so the branch never fires. The only thing that made it correct was
+`pjs_host_alloc_stats_reset()`, which installs `lo = PJS_REGION_HI` — and **the
+target never calls it**. It was called by exactly one caller, the host test.
+
+So: a bound whose correctness depended on somebody remembering to call a reset,
+and the one place that called it was the test. `hi` was unaffected because `hi`
+only ever *increases* from 0, which is why only one of the two bounds broke.
+
+### 10.5 Why the host test did not catch it
+
+This is the part worth keeping. `tools/host-test/test_alloc.c` called
+`pjs_host_alloc_stats_reset()` before its assertions, which installed the
+sentinel and made `lo` correct. The test therefore exercised a state the firmware
+never runs in, and passed 33/33 while the board failed.
+
+A test that sets up a different state than the firmware runs in is not testing
+the firmware. The host test's own value was never in doubt for the *arithmetic*
+(`align_eight_is_the_failing_case` caught the real Gate 0 defect); what it lacked
+was fidelity to the target's initialisation.
+
+### 10.6 Fix
+
+Seed the range from the first accepted allocation, keyed on `allocs == 0`, so the
+zero-initialised boot state is correct with no initialisation at all:
+
+```c
+/* pocketjs_alloc.c, after */
+if (lo < PJS_REGION_LO || hi > PJS_REGION_HI) {   /* checked first, so a      */
+    …                                            /* refused block cannot     */
+}                                                /* seed or widen the range  */
+
+if (g_stats.allocs == 0u) { g_stats.lo = lo; g_stats.hi = hi; }
+else { if (lo < g_stats.lo) g_stats.lo = lo;
+       if (hi > g_stats.hi) g_stats.hi = hi; }
+g_stats.allocs++;
+```
+
+Supporting changes:
+
+- `pjs_host_alloc_stats_reset()` now **zeroes** the range instead of installing a
+  sentinel, so it reproduces the boot state exactly. That is what makes the defect
+  reproducible off-board at all.
+- `test.region_lo` / `test.region_hi` are guarded on `allocs > 0`, and a new
+  `test.range_seeded` separates "no samples" from "a low bound of 0".
+- `pjs_mem_test` prints the host counters as `before -> after`, using the
+  `st_before` it already captured but never used.
+
+### 10.7 The new check is a real guard
+
+`range_tracking_is_correct()` was added to the host test, then the allocator was
+**mutated back** to the sentinel logic to confirm the check fails on the defect it
+is meant to catch:
+
+```
+-- payload range tracking (boot state, no sentinel) --
+  PASS  a freshly reset range has no samples
+  FAIL  the first allocation seeds the low bound
+  PASS  the first allocation seeds the high bound
+  FAIL  the low bound follows the lowest payload
+  PASS  the high bound follows the highest payload
+43 checks, 2 failure(s)
+```
+
+Two failures, both on the low bound, high bound fine — the board's exact
+signature. With the fix restored: 43 checks, 0 failures.
+
+### 10.8 Status
+
+Run 1 is **not** a Gate 1A pass: `RESULT FAIL` is `RESULT FAIL`, and the rule is
+that a failing gate is fixed and re-run, not explained away. What run 1 does
+establish is that every substantive property of the gate held on silicon, and
+that the one failure was in the port's own bookkeeping rather than in the memory
+plan. It also closed §5.4.
+
+See §11 for the re-run.
+
+---
+
+## 11. Re-run build — `6917bee`
+
+The fix is in, the tree is clean, and the firmware carries its own revision:
+
+```
+$ strings -a d13x.bin | grep -A1 'PocketJS D13x port'
+PocketJS D13x port - Gate 1A firmware (Retained UI Core: allocator)
+6917bee
+```
+
+Three objects rebuilt (`main.c` for the revision string, `pocketjs_alloc.c` for
+the fix, `pocketjs_mem.c` for the assertions), 0 safe-delete hits,
+`Luban-Lite is built successfully`.
+
+```
+d13x.bin   230,816 B   sha256 a5e90577…
+d13x.elf 3,575,264 B   sha256 f4a823fc…
+d13x.map 1,841,744 B   sha256 631febcf…
+d13x_D50T-2-Lite_page_2k_block_128k_v1.0.0.img  833,024 B  sha256 78d09a17…
+```
+
+**This is the artifact to flash for the re-run.** The `ba2ea02` build in §6.1.1
+supersedes nothing — it is the run-1 artifact, kept for the record.
+
+### 11.1 Memory map — unchanged where it matters
+
+```
+SRAM_S0     0x30040000 + 0x000C0000
+PSRAM_CMA   0x40000000 + 0x00800000
+PSRAM_SW    0x40800000 + 0x00800000
+  __psram_sw_heap_start = 0x40800000
+  __psram_sw_heap_end   = 0x41000000
+  __heap_start / __heap_end = 0x30040000 / 0x30140000   (unchanged)
+__psram_cma_heap_start = 0x4003CD48   (was 0x4003CBC8)
+```
+
+Only the CMA heap start moved, by the 384 B the image grew. `PSRAM_SW` is
+`0x40800000 .. 0x41000000` in every build so far — which is §5.2's point holding
+up under a second, independent change: firmware growth comes out of CMA, never
+out of the PocketJS heap.
+
+All four MSH commands are registered, and `pjs_mem_report`, `pjs_mem_test`,
+`pjs_host_alloc_stats`, `pjs_probe_alloc_stress`, `aic_memheap_free` and
+`rt_memheap_info` are all linked.
+
+### 11.2 What the re-run has to show
+
+Run 1 passed 24 of 25 checks; the re-run must move the last one. Expect:
+
+```
+[pjs-mem]   host  : payload range=40800000 .. 40800118   (cumulative)
+[pjs-mem] PASS  test.range_seeded
+[pjs-mem] PASS  test.region_lo
+[pjs-mem] PASS  test.region_hi
+[pjs-mem] SUMMARY pass=25 fail=0
+[pjs-mem] RESULT PASS
+```
+
+The low bound must be an address inside PSRAM_SW, not `0x00000000`. `40800000`
+is the expected value: PSRAM_SW's heap starts exactly at the region start, so the
+first payload should sit at the very bottom of it. A low bound slightly above
+that is also fine — what is not fine is `0`, or anything below `0x40800000`, or
+anything at or above `0x41000000`.
+
+`test.range_seeded` is new and exists to make the failure mode legible: if the
+range is ever unpopulated again, it says so, instead of the report printing
+`00000000` as though it were an address.
+
+Also re-confirm on the re-run, since the whole firmware changed:
+
+- `psram : efuse=16 MiB, linked=16 MiB` (still the §5.4 answer)
+- `[pjs-abi] SUMMARY pass=47 fail=0` / `RESULT PASS` (Gate 0 regression)
+- `sram : used … -> … max … -> …` flat (the negative proof)
+
+### 11.3 Status
+
+**NOT HARDWARE VALIDATED.** This build is statically verified, host-tested at
+43/43, and carries the fix for the one check run 1 failed — but it has not been
+on a board. Gate 1A passes when the re-run prints `RESULT PASS`, not before.
+
+

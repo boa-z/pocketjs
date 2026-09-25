@@ -225,7 +225,7 @@ because the first hardware run passed the entire ABI and then aborted in the
 allocator - arithmetic that a host test can cover, so it does.
 
 Gate 1A added a stub `aic_osal.h` so the same test can also see *which heap* the
-allocator asks for. Two checks come out of it:
+allocator asks for. Three checks come out of it:
 
 - **region contract** - both the fast path and the over-aligned path go through
   `MEM_PSRAM_SW`, and nothing goes to `MEM_CMA` or the system heap. This is the
@@ -234,8 +234,13 @@ allocator asks for. Two checks come out of it:
   narrows it and confirms the out-of-region path actually fires, refuses the
   allocation, and returns the rejected block to the heap. A check that can only
   be taken on faith is not a check.
+- **payload range** - the reported min/max payload addresses are seeded by the
+  first allocation. This one exists because the first Gate 1A hardware run failed
+  on exactly that, and this test had missed it by always calling the stats reset
+  first - exercising a state the firmware never runs in. Restoring the old
+  sentinel logic makes it fail, so it is a real guard.
 
-33 checks, all passing. Where the pointers *land* is a board-side question, and
+43 checks, all passing. Where the pointers *land* is a board-side question, and
 `pjs_mem_test` answers it there.
 
 ### 4. Firmware
@@ -262,10 +267,11 @@ Gate 0 run, `gate1a` for the Gate 1A build). `.pocket-build/` is git-ignored:
 per-run captures are never committed.
 
 The Gate 1A artifact to flash is recorded in
-[GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §6.1.1 - `d13x.bin` sha256
-`c1d2c450…`. It was built from a clean tree at revision `ba2ea02`, so the boot
-banner reads exactly `ba2ea02`; a later docs-only commit does not change the
-binary or invalidate that pin.
+[GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §11 - `d13x.bin` sha256
+`a5e90577…`, built from a clean tree at revision `6917bee`, so the boot banner
+reads exactly `6917bee`. A later docs-only commit does not change the binary or
+invalidate that pin. (The `ba2ea02` build in §6.1.1 was run 1; it fails
+`test.region_lo` and should not be flashed again.)
 
 ### 5. On target
 
@@ -329,7 +335,7 @@ be false and the fallback would compile.
 | Gate | Scope | Status |
 |------|-------|--------|
 | 0 | Rust ILP32D toolchain bridge, ABI, allocator | **PASS on hardware** — 47/47 checks, `RESULT PASS`. Two evidence gaps (deliberate panic, post-reset re-run) - see [GATE0-REPORT.md](GATE0-REPORT.md) |
-| 1A | PSRAM_SW allocator backend + `pjs_mem` / `pjs_mem_test` | **implemented, not hardware validated** — host test 33/33, map statically verified; one efuse-dependent boot path needs a board check - see [GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §5.4 |
+| 1A | PSRAM_SW allocator backend + `pjs_mem` / `pjs_mem_test` | **one hardware run, `RESULT FAIL` on one check; fixed and rebuilt, awaiting re-run** — host test 43/43, map statically verified. Run 1 passed 24/25 and confirmed the memory plan, the efuse path and the Gate 0 regression; it failed `test.region_lo` on a telemetry defect in the port's own code. See [GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §10, §11 |
 | 1B-1C | Retained UI core (`no_std` + alloc) | not started |
 | 2 | RGB565 software renderer -> AIC framebuffer | not started |
 | 3 | QuickJS-ng guest | not started |
@@ -343,9 +349,14 @@ checks. Run 1 is kept in the report because it is what caught the allocator
 defect. The deliberate `pjs_abi_panic` and a post-reset re-run are still
 uncaptured, and are flagged as such rather than assumed.
 
-Gate 1A has not been run on hardware. Until it is, the firmware reports
-`NOT HARDWARE VALIDATED` for it in the gate report, and no UI core, QuickJS,
-framebuffer or GE work starts.
+Gate 1A has been on hardware once, and did **not** pass: 24 of 25 checks, with
+`test.region_lo` failing because the payload range was never seeded - the target
+never called the stats reset that installed the sentinel. Every substantive
+property the gate exists to prove did hold on silicon (allocations in PSRAM_SW,
+SRAM heap flat, alignment, Box/Vec/String over 1000 rounds, Rust and C checksums
+agreeing), and §5.4's efuse hazard turned out not to be live on this board. The
+fix is built and host-tested; Gate 1A passes when the re-run prints
+`RESULT PASS`, and not before.
 
 Until Gate 1 is reviewed and passed, the runtime stays a conformance probe: no
 UI core, no QuickJS, no framebuffer, no GE.
