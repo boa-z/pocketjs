@@ -502,9 +502,9 @@ Neither affects the allocator verdict, and neither is a defect. They are
 unverified claims that this report declines to make. To close them:
 
 ```
-msh /> pjs_abi_panic    # expect: abort, board halts, no return
+aic /> pjs_abi_panic    # expect: abort, board halts, no return
 # press reset
-msh /> pjs_abi          # expect: SUMMARY pass=47 fail=0 / RESULT PASS
+aic /> pjs_abi          # expect: SUMMARY pass=47 fail=0 / RESULT PASS
 ```
 
 ### Why Gate 0 passes
@@ -627,10 +627,17 @@ observed working in run 1.
 neither has been folded into a later run:
 
 ```
-msh /> pjs_abi_panic    # expect: abort, board halts, no return
+aic /> pjs_abi_panic    # expect: abort, board halts, no return
 # press reset
-msh /> pjs_abi          # expect: SUMMARY pass=47 fail=0 / RESULT PASS
+aic /> pjs_abi          # expect: SUMMARY pass=47 fail=0 / RESULT PASS
 ```
+
+`pjs_abi_panic` is the one probe that is deliberately **not** auto-run at boot:
+it halts the board, so autorunning it would turn every boot into a halt. That is
+why neither item can be closed by a boot capture — both need an operator at the
+prompt. The prompt on this board is `aic />`, not `msh />`; earlier revisions of
+this report and of the port README printed `msh />`, which never appears on
+target. Corrected.
 
 ### Next: Gate 1 — retained UI core
 

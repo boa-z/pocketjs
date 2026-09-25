@@ -279,15 +279,19 @@ Serial 115200 8N1. Both probes run once automatically at boot, so the evidence
 reaches the console without an operator at the prompt. Then:
 
 ```
-msh /> pjs_abi             # Gate 0 regression, prints RESULT PASS/FAIL
-msh /> pjs_mem             # heap map: SRAM / PSRAM_SW / CMA + region telemetry
-msh /> pjs_mem_test        # Gate 1A assertion, 1000 rounds by default
-msh /> pjs_mem_test 5000   # ...or however many you want
-msh /> pjs_abi_panic       # deliberate panic; must abort and halt
+aic /> pjs_abi             # Gate 0 regression, prints RESULT PASS/FAIL
+aic /> pjs_mem             # heap map: SRAM / PSRAM_SW / CMA + region telemetry
+aic /> pjs_mem_test        # Gate 1A assertion, 1000 rounds by default
+aic /> pjs_mem_test 5000   # ...or however many you want
+aic /> pjs_abi_panic       # deliberate panic; must abort and halt
 ```
 
 `pjs_mem` only reads; `pjs_mem_test` changes the heap. They are separate
 commands so the report's numbers do not depend on whether the test has run.
+
+`pjs_abi_panic` is the one probe that is **never** auto-run: it halts the board,
+so autorunning it would turn every boot into a halt. It must be typed, and it
+must be typed last. The prompt on this board is `aic />`.
 
 `pjs_mem_test` fails loudly if `heap_psram_sw` is not registered, rather than
 running a test that would pass by allocating from the wrong place.
@@ -335,7 +339,7 @@ be false and the fallback would compile.
 | Gate | Scope | Status |
 |------|-------|--------|
 | 0 | Rust ILP32D toolchain bridge, ABI, allocator | **PASS on hardware** — 47/47 checks, `RESULT PASS`. Two evidence gaps (deliberate panic, post-reset re-run) - see [GATE0-REPORT.md](GATE0-REPORT.md) |
-| 1A | PSRAM_SW allocator backend + `pjs_mem` / `pjs_mem_test` | **PASS on hardware** — `pass=26 fail=0`, `RESULT PASS`, with the Gate 0 regression re-confirmed at 47/47. Run 1 found one telemetry defect in the port's own code (`test.region_lo`); fixed, rebuilt and re-run clean. See [GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §10, §11 |
+| 1A | PSRAM_SW allocator backend + `pjs_mem` / `pjs_mem_test` | **PASS on hardware** — `pass=26 fail=0`, `RESULT PASS`, with the Gate 0 regression re-confirmed at 47/47. Run 1 found one telemetry defect in the port's own code (`test.region_lo`); fixed, rebuilt and re-run clean. A third run reproduced every value — including the payload addresses — to the byte. See [GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §10, §11 |
 | 1B-1C | Retained UI core (`no_std` + alloc) | not started |
 | 2 | RGB565 software renderer -> AIC framebuffer | not started |
 | 3 | QuickJS-ng guest | not started |
