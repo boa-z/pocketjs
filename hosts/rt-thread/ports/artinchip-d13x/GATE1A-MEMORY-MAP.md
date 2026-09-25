@@ -111,7 +111,10 @@ PSRAM_SW : ORIGIN = 0x40000000 + 0x1000000 - 0x800000 , LENGTH = 0x800000
 ## 5. The resulting map — read from the linked image
 
 The firmware has now been linked with the new config (§6), so the figures below
-are **readings from `d13x.map`**, not derivations.
+are **readings from `d13x.map`**, not derivations. Unless a row says otherwise
+they are read from the config-only build (`-g1verify`, §6), which is the cleanest
+way to see the effect of the config change alone; §5.2 notes where the Gate 1A
+code shifts a figure.
 
 ### 5.1 Memory configuration
 
@@ -155,6 +158,22 @@ __end                  = 0x4003AE60
 
 The arithmetic: `0x40800000 - 0x4003AE60 = 8,146,336 B = 7.77 MiB`, and
 `0x41000000 - 0x40800000 = 8,388,608 B = 8.00 MiB`.
+
+These figures come from the **config-only** build (`-g1verify`: the 8 MiB split,
+before any Gate 1A code). Adding the Gate 1A code grows the image by 7,528 B, and
+because the firmware itself lives in `PSRAM_CMA`, that growth is taken out of the
+CMA heap, not out of `PSRAM_SW`:
+
+| Build | `__end` / CMA heap start | CMA heap | `PSRAM_SW` |
+|-------|--------------------------|----------|------------|
+| `-g1verify` (no Gate 1A code) | `0x4003AE60` | 7.77 MiB | 8.00 MiB |
+| `-g1a` / `-g1b` (the artifact) | `0x4003CBC8` | 7.76 MiB | 8.00 MiB |
+
+`PSRAM_SW` is `0x40800000 .. 0x41000000` in both, because its bounds are derived
+from the config (`AIC_PSRAM_SIZE - AIC_PSRAM_SW_SIZE`), not from the image size.
+That is the property Gate 1A depends on: the PocketJS heap cannot be squeezed by
+firmware growth. Only CMA absorbs it — worth remembering at Gate 2, when the
+framebuffer lands in CMA too.
 
 `.psram_cma` and `.psram_sw` are both zero-length sections, so each heap begins
 exactly at its region start — as expected, since only the macros
