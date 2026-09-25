@@ -1,6 +1,11 @@
 # dependency and platform noise
 node_modules/
 target/
+# The bare `target/` above is unanchored, so it also matched the SDK overlay's
+# target/ tree and silently swallowed the port's defconfig - the source of truth
+# apply-sdk.py materialises into the SDK. Re-include it explicitly.
+!hosts/rt-thread/ports/artinchip-d13x/sdk/overlay/target/
+!hosts/rt-thread/ports/artinchip-d13x/sdk/overlay/target/**
 hosts/esp-idf/components/*/lib/
 .DS_Store
 # Python bytecode from the host port tooling (hosts/rt-thread/ports/**/tools)
