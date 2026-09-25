@@ -4,12 +4,13 @@
 current SDK configuration and the linker template — **not** by assuming.
 
 **Date:** 2026-09-25
-**Status:** **HARDWARE VALIDATED — GATE 1A PASS.** Two hardware runs. Run 1 (§10)
+**Status:** **HARDWARE VALIDATED — GATE 1A PASS.** Three hardware runs. Run 1 (§10)
 answered the open memory questions and found one telemetry defect; run 2 (§11.2)
 is `pass=26 fail=0` / `RESULT PASS` with the Gate 0 regression re-confirmed at
-47/47. The map is read from `d13x.map`, not assumed. The one remaining Gate 0
-evidence gap (`pjs_abi_panic`) is unchanged and flagged in
-[GATE0-REPORT.md](GATE0-REPORT.md).
+47/47; run 3 (§11.4) reproduced every value to the byte. The map is read from
+`d13x.map`, not assumed. Gate 0's last evidence gap (`pjs_abi_panic`) was
+subsequently captured and passes, so Gate 0 is now closed —
+[GATE0-REPORT.md](GATE0-REPORT.md) §9.
 
 ---
 
@@ -474,8 +475,9 @@ heap flat, and the Gate 0 regression re-confirmed at 47/47 on the rebuilt
 firmware. Every criterion the gate was opened with is met on silicon (§11.3).
 
 **Not run, and not required for Gate 1A:** `pjs_mem` (read-only heap map) and
-`pjs_abi_panic`. The latter is still the one Gate 0 evidence gap; it is unchanged
-by this work and remains flagged in [GATE0-REPORT.md](GATE0-REPORT.md).
+`pjs_abi_panic`. The latter was Gate 0's one remaining evidence gap; it was
+captured separately on 2026-09-25 and passes, so Gate 0 is closed —
+[GATE0-REPORT.md](GATE0-REPORT.md) §9.1.
 
 **Gate 1A is where this stops.** No UI core, QuickJS, framebuffer or GE starts
 until Gate 1 is reviewed.
@@ -857,9 +859,9 @@ Every criterion the gate was opened with is met on silicon:
 | Gate 0 still passes through the new backend | `pass=47 fail=0` |
 
 Not run in this capture, and not required for Gate 1A: `pjs_mem` (read-only heap
-map) and `pjs_abi_panic`. The latter remains the one Gate 0 evidence gap — it is
-unchanged by this work and is still flagged as such in
-[GATE0-REPORT.md](GATE0-REPORT.md).
+map) and `pjs_abi_panic`. The latter was Gate 0's one remaining evidence gap; it
+was captured separately on 2026-09-25 and passes, so Gate 0 is closed —
+[GATE0-REPORT.md](GATE0-REPORT.md) §9.1.
 
 **Per the roadmap, Gate 1A is where this stops.** No RGB565 renderer, no QuickJS,
 no framebuffer and no GE until Gate 1 is reviewed.
