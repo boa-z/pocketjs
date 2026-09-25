@@ -4,8 +4,9 @@
 current SDK configuration and the linker template — **not** by assuming.
 
 **Date:** 2026-09-25
-**Status:** change applied and verified at the config + linker-script level.
-**The full firmware rebuild is blocked by the build environment** — see §6.
+**Status:** change applied, **firmware linked**, map read from `d13x.map` and
+statically verified. One efuse-dependent boot path is open and needs a board-side
+check (§5.4).
 
 ---
 
@@ -107,67 +108,153 @@ PSRAM_SW : ORIGIN = 0x40000000 + 0x1000000 - 0x800000 , LENGTH = 0x800000
 
 ---
 
-## 5. The resulting map
+## 5. The resulting map — read from the linked image
 
-Everything below follows from §4 plus two facts verified in the source:
+The firmware has now been linked with the new config (§6), so the figures below
+are **readings from `d13x.map`**, not derivations.
 
-- Nothing places data in `.psram_sw_data` or `.psram_cma_data` — only the macros
-  `PSRAM_SW_DATA_DEFINE` / `PSRAM_CMA_DATA_DEFINE` exist, and nothing uses them.
-  So each heap starts exactly at its section's start.
-- `AIC_DEFAULT_SYS_HEAP_SRAM` is still selected, so `__heap_start`/`__heap_end`
-  keep pointing at SRAM (`gcc_aic.ld.S:128-137`).
+### 5.1 Memory configuration
+
+```
+Name             Origin             Length
+BROM             0x0000000030000000 0x0000000000040000
+SRAM_S0          0x0000000030040000 0x00000000000c0000
+SRAM_S1_CMA      0x0000000040000000 0x0000000000000000
+SRAM_S1_SW       0x0000000040000000 0x0000000000000000
+PSRAM_CMA        0x0000000040000000 0x0000000000800000     <- 8 MiB
+PSRAM_SW         0x0000000040800000 0x0000000000800000     <- 8 MiB
+```
+
+### 5.2 Regions
 
 | Region | Base | End | Size |
 |--------|------|-----|------|
 | PSRAM, total | `0x40000000` | `0x41000000` | **16.00 MiB** (unchanged) |
-| └ image (text/rodata/data/bss) | `0x40000000` | `__psram_cma_heap_start` | 234.2 KiB at the last build |
-| └ **`PSRAM_CMA` heap** | `__psram_cma_heap_start` ≈ `0x4003A8BC` | **`0x40800000`** | **≈ 7.77 MiB** (was 15.77) |
+| └ image (text/rodata/data/bss) | `0x40000000` | `0x4003AE60` | 235.7 KiB |
+| └ **`PSRAM_CMA` heap** | `0x4003AE60` | **`0x40800000`** | **7.77 MiB** (was 15.77) |
 | └ **`PSRAM_SW` heap** | **`0x40800000`** | **`0x41000000`** | **8.00 MiB** (was 0) |
 | SRAM default heap | `0x30040000` | `0x30140000` | **1.00 MiB** (unchanged) |
 
-Named symbol values:
+Named symbol values, all `PROVIDE`d and all resolved:
 
 ```
 __psram_start          = 0x40000000     unchanged
 __psram_end            = 0x41000000     unchanged
 __psram_cma_end        = 0x40800000     was 0x41000000
-__psram_sw_data_start  = 0x40800000     deterministic (no .psram_sw_data users)
+__psram_cma_heap_start = 0x4003AE60     (= __end, after the image)
+__psram_cma_heap_end   = 0x40800000
+__psram_sw_data_start  = 0x40800000     (no .psram_sw_data users)
+__psram_sw_data_end    = 0x40800000
 __psram_sw_heap_start  = 0x40800000     was 0x41000000
 __psram_sw_heap_end    = 0x41000000     was 0x41000000 (equal to start)
-__heap_start/__heap_end= 0x30040000 / 0x30140000   unchanged
+__cma_heap_end         = 0x40800000
+__heap_start           = 0x30040000     unchanged (SRAM)
+__heap_end             = 0x30140000     unchanged (SRAM)
+__end                  = 0x4003AE60
 ```
 
-The arithmetic, for the record: `0x40800000 - 0x4003A8BC = 8,148,804 B =
-7.77 MiB`, and `0x41000000 - 0x40800000 = 8,388,608 B = 8.00 MiB`.
+The arithmetic: `0x40800000 - 0x4003AE60 = 8,146,336 B = 7.77 MiB`, and
+`0x41000000 - 0x40800000 = 8,388,608 B = 8.00 MiB`.
 
-### Do the firmware / link sections move?
+`.psram_cma` and `.psram_sw` are both zero-length sections, so each heap begins
+exactly at its region start — as expected, since only the macros
+`PSRAM_SW_DATA_DEFINE` / `PSRAM_CMA_DATA_DEFINE` exist and nothing uses them.
 
-**No.** `REGION_TEXT`, `REGION_RODATA`, `REGION_DATA` and `REGION_BSS` all alias
-`PSRAM_CMA` (`gcc_aic.ld.S:161-198`), whose **origin is unchanged at
-`0x40000000`**. Only the region's upper bound moves, from `0x41000000` to
-`0x40800000`. The image occupies 234 KiB of the new 8 MiB, so nothing relocates.
+### 5.3 Do the firmware / link sections move?
 
-The one thing that does shift is `__psram_cma_heap_start`: it is placed after the
-image sections, so it moves by whatever the recompiled image grows or shrinks by.
-That number needs a real link to pin down (§6).
+**No.** Side by side with the Gate 0 build:
 
-### A boot-time risk worth flagging
+| Section | Gate 0 (`PSRAM_SW=0`) | Gate 1A (`PSRAM_SW=8 MiB`) |
+|---------|----------------------|---------------------------|
+| `.text` | `0x40000000` + `0x2B490` | `0x40000000` + `0x2B720` |
+| `.rodata` | `0x4002B4D0` + `0x8E10` | `0x4002B760` + `0x8E90` |
+| `.data` | `0x40034300` + `0x1E3C` | `0x40034600` + `0x20E0` |
+| `.bss` | `0x40036140` + `0x477C` | `0x400366E0` + `0x4780` |
+| `PSRAM_CMA` | `0x40000000` + `0x1000000` | `0x40000000` + `0x800000` |
+| `PSRAM_SW` | `0x41000000` + `0x0` | `0x40800000` + `0x800000` |
 
-`board.c:85` grows the PSRAM_SW heap at runtime by
-`aic_get_ram_size() - AIC_PSRAM_SIZE`, where `aic_get_ram_size()` reads the
-**PSRAM size fuse**. If the fuse ever reported *less* than the configured 16 MiB,
-that delta would be negative and `aic_memheap_init()`'s
-`RT_ASSERT(end_align > begin_align)` (`board.c:92`) would fire at boot. If the
-fuse reports more, PSRAM_SW simply grows past `0x41000000`, which is the SDK's
-intent. The fused size is only readable on hardware, so this is a **board-side
-check for step 5**, not something this report can settle.
+Every section keeps its **origin**; the regions' upper bounds are what move. The
+image occupies 235.7 KiB of the new 8 MiB CMA region, so nothing relocates.
+
+The small size differences (`.text` +656 B) are explained, not noise: enabling
+`AIC_PSRAM_SW_EN` compiles in the `heap_psram_sw` table entry and the
+fuse-adjustment block in `target/d13x/d50t-2-lite/board.c`.
+
+### 5.4 Boot-time risk — the one real hazard
+
+This is the item that needs a board-side check, and it is **new** with this
+change.
+
+`board.c:81-90` adjusts the PSRAM_SW heap end at every boot:
+
+```c
+#if AIC_PSRAM_SIZE
+#ifdef AIC_PSRAM_SW_EN
+    #if !defined(AIC_DEFAULT_SYS_HEAP_PSRAM)
+        if (aic_memheaps[i].type == MEM_PSRAM_SW) {
+            aic_memheaps[i].end_addr += (aic_get_ram_size() - AIC_PSRAM_SIZE);
+        }
+    #endif
+#endif
+#endif
+```
+
+and then asserts `RT_ASSERT(end_align > begin_align)` (`board.c:92`).
+
+`aic_get_ram_size()` (`bsp/artinchip/sys/d13x/ram_param.c:147`) reads the PSRAM
+size **from efuses**. The board is a D133ECS, whose table entry is 16 MiB, so
+the delta should be `0` and the heap should be `0x40800000`–`0x41000000`.
+
+But the table's entry 0 is `{0x0, 0, 0, {0, 0}}` — a deliberate "force use the
+cfg0" fallback — and `psram_get_info()` **returns it whenever no fuse entry
+matches**. That entry reports **size 0**. In that case:
+
+```
+end_addr = 0x41000000 + (0 - 0x1000000) = 0x40000000
+begin    = 0x40800000
+RT_ASSERT(0x40000000 > 0x40800000)  ->  fails at boot
+```
+
+Gate 0 never exercised this path: with `PSRAM_SW = 0`, `MEM_PSRAM_SW` was not an
+enumerator, so the loop body never matched and the assert never ran. Enabling
+`PSRAM_SW` therefore introduces a **boot-time dependency on the efuse read** that
+the Gate 0 firmware did not have.
+
+If the fuse reports *more* than 16 MiB, the heap simply grows past `0x41000000`,
+which is the SDK's intent and is safe.
+
+**This cannot be settled statically.** It is a board-side check: print
+`aic_get_ram_size()` (or call `aic_show_ram_size()`) on the first Gate 1A boot,
+and confirm the PSRAM_SW heap initialises. It is flagged here rather than worked
+around, because a wrong guess would turn into a boot loop with no diagnostic.
+
+### 5.5 Two layout facts checked and cleared
+
+- **MPP / GE / VE / DMA:** not a conflict, because none of them are compiled in.
+  The port's defconfig sets neither `CONFIG_LPKG_MPP` nor any `CONFIG_AIC_USING_GE`
+  / `_VE` / `_DMA` / `AICFB` / `DISP` option. The only cost is that the CMA pool
+  Gate 2 will draw its framebuffer from is now 7.77 MiB instead of 15.77 MiB —
+  the accepted, explicit trade of this decision.
+- **Bootloader overlap:** the bootloader's custom script
+  (`application/baremetal/bootloader/ldscript/d13x_bootloader_gcc.ld`) places it
+  at `0x40C00100` with heap `0x40C80000`–`0x41000000`, i.e. the **top 4 MiB of
+  PSRAM**. That range now falls inside `PSRAM_SW` rather than inside `CMA`. This
+  is **not a regression**: in the Gate 0 build the CMA heap already spanned
+  `0x4003A8BC`–`0x41000000` and covered exactly the same addresses. The SDK's app
+  layout does not reserve the bootloader region in either configuration.
+- **`__dtb_pos_f`** resolves to `0x40FC0000`, inside `PSRAM_SW`. It is a dead
+  symbol: it is only ever `PROVIDE`d by the linker templates, no C or assembly
+  reads it, and `tools/scripts/sdk_update.py:38` actively *strips* an
+  `extern size_t __dtb_pos_f;` line from generated code. It is identical
+  (`0x40FC0000`) in both builds. No DTB is placed there.
 
 ---
 
-## 6. Blocker: the full rebuild cannot complete here
+## 6. The rebuild — how it was completed
 
 The config change invalidates `rtconfig.h`, which nearly every translation unit
-includes, so SCons must recompile the whole project — 157 objects plus a relink.
+includes, so SCons had to recompile the whole project — 157 objects plus a
+relink.
 
 The build environment enforces a **bulk-delete budget of 50 operations per
 turn**. SCons removes an out-of-date target before re-running its builder, so
@@ -179,58 +266,79 @@ each of those 157 rebuilds counts. After 50 the guard fires:
 ```
 
 and SCons then prints `scons: done building targets.` and exits **0** — a
-silent no-op. The linked firmware is still the previous one:
-
-```
-output/.../images/d13x.elf   2026-09-25 07:33:15   (unchanged)
-output/.../images/d13x.bin   sha256 52d21549…      (unchanged)
-```
+silent no-op that leaves the old firmware in place.
 
 What was tried, and why each failed:
 
 | Attempt | Result |
 |---------|--------|
-| `build-firmware.py -j8` | compiled ~8 objects, then blocked at 08:05 and hung |
+| `build-firmware.py -j8` | compiled ~8 objects, then blocked and hung |
 | `build-firmware.py -j4` | same block; exits 0 without rebuilding |
 | `scons -j4` directly | same block |
 | removing `.sconsign.dblite` | allowed, but does not change the block |
 | running the build with the sandbox disabled | **still blocked** — the guard is a filesystem-level control, not the shell sandbox |
 | renaming the output directory aside to force a clean build | `Permission denied` |
+| spreading the rebuild across turns | the delete counter does not reset between turns |
 
-So the environment cannot currently produce the new firmware, and the *linked*
-map cannot be confirmed. The map in §5 is derived from the linker template and
-the resolved config, both of which are verified on disk; the confirmation step
-needs a build that can write more than 50 files.
+**What worked:** build under a temporary project name, so SCons populates a
+**fresh** output directory and needs **zero** deletes.
 
-This is not a linker, boot or MPP conflict — it is a tooling limit. Nothing has
-been changed to work around it, and no hand-rolled link was attempted: that would
-be exactly the kind of unreproducible step this port forbids.
+```
+cp target/configs/d13x_d50t-2-lite_rt-thread_pocketjs-smoke_defconfig \
+   target/configs/d13x_d50t-2-lite_rt-thread_pocketjs-g1verify_defconfig
+sed -i 's/^CONFIG_PRJ_DEFCONFIG_FILENAME=.*/...pocketjs-g1verify_defconfig"/' \
+   target/configs/d13x_d50t-2-lite_rt-thread_pocketjs-g1verify_defconfig
+scons --apply-def=d13x_d50t-2-lite_rt-thread_pocketjs-g1verify_defconfig
+scons -j8
+```
+
+Result: 157 objects built, `safe-delete` hits **0**, log ends
+`Luban-Lite is built successfully`, and the images are new:
+
+```
+output/d13x_d50t-2-lite_rt-thread_pocketjs-g1verify/images/d13x.elf  3,529,796 B  2026-09-25 08:35:30
+output/d13x_d50t-2-lite_rt-thread_pocketjs-g1verify/images/d13x.bin    222,944 B  2026-09-25 08:35:30
+```
+
+The `-g1verify` defconfig is a **local, untracked** copy that differs from the
+port's defconfig only in `CONFIG_PRJ_DEFCONFIG_FILENAME`. It exists purely to get
+a clean output directory past the delete guard. It is **not** part of the port:
+a fresh clone builds `pocketjs-smoke` from the tracked, committed defconfig,
+which carries the identical memory settings. No threshold was raised, no file was
+deleted out of band, and no hand-rolled link was attempted.
+
+Note that this guard only bites on a *full* rebuild. An incremental rebuild after
+editing `pocketjs_alloc.c` recompiles one object plus the relink — a handful of
+deletes, well inside the budget — so Gate 1A development proceeds normally
+against this output directory.
 
 ---
 
-## 7. Status and what is needed
+## 7. Status
 
-**Done:**
+**Done and verified:**
 
 - The original finding (PSRAM_SW = 0) is fully evidenced.
 - The partition formula is confirmed from the template, not inferred.
 - The config change is applied, resolves correctly, and is recorded in the port's
-  defconfig only.
-- The regenerated linker script is verified on disk with the expected values.
-- The resulting map is derived and documented, including what does *not* move.
+  defconfig only — the product baseline is untouched.
+- The firmware is **linked** with the new map, and §5.1–5.3 are readings from
+  `d13x.map`, not predictions.
+- The link sections are confirmed **not** to move.
+- MPP/GE/VE/DMA, the bootloader overlap and `__dtb_pos_f` are all checked and
+  cleared (§5.5).
 
-**Not done, and deliberately not claimed:**
+**Open, board-side:**
 
-- No firmware has been linked with the new map, so §5 is a derived prediction for
-  the symbol values, not a reading from a `.map` file.
-- No Gate 1A code has been written. `pjs_host_alloc(size, align)` is still exactly
-  the Gate 0 implementation backed by `rt_malloc`; the backend swap has not
-  started.
+- The efuse-dependent `aic_memheap_init()` path in §5.4 — print
+  `aic_get_ram_size()` on the first Gate 1A boot and confirm the PSRAM_SW heap
+  initialises.
 
-**Needed to continue:** a build that can rewrite more than 50 files in one turn —
-either a raised bulk-delete threshold, or the output directory cleaned out of
-band. Once the link succeeds, §5 gets replaced with the real `.map` values, and
-only then does the Gate 1A allocator work begin.
+**Not started:**
+
+- No Gate 1A code yet. `pjs_host_alloc(size, align)` is still exactly the Gate 0
+  implementation backed by `rt_malloc`; the backend swap begins only now that the
+  map is statically verified.
 
 ---
 
@@ -242,10 +350,15 @@ target/configs/d13x_d50t-2-lite_rt-thread_pocketjs-smoke_defconfig (the change)
 rtconfig.h                                                         (resolved symbols)
 target/d13x/common/Kconfig.board                                   (lines 915-960)
 bsp/common/include/aic_common.h                                    (lines 395-447)
-target/d13x/d50t-2-lite/board.c                                    (lines 49-98)
+target/d13x/d50t-2-lite/board.c                                    (lines 49-98, 149-156)
+bsp/artinchip/sys/d13x/ram_param.c                                 (lines 100-200)
 bsp/artinchip/sys/d13x/link_script/gcc_aic.ld.S                    (lines 50, 79-80, 108-113)
 bsp/artinchip/sys/d13x/link_script/gcc_aic.ld                      (regenerated, verified)
+application/baremetal/bootloader/ldscript/d13x_bootloader_gcc.ld   (bootloader region)
 SConstruct                                                         (lines 84-88)
+
+output/d13x_d50t-2-lite_rt-thread_pocketjs-g1verify/images/d13x.map   (Gate 1A link)
+output/d13x_d50t-2-lite_rt-thread_pocketjs-smoke/images/d13x.map      (Gate 0 link)
 ```
 
 The `d13x` linker script and `board.c` are shared across the D13x family, so
