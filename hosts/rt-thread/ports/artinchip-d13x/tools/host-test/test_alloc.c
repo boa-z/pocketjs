@@ -11,6 +11,12 @@
  * and the allocator must never ask for CMA or the system heap. Both are checked
  * below; the second one is what region_contract() is for.
  *
+ * The first Gate 1A hardware run then failed on a third thing - the reported
+ * payload range - which this test had missed because it always called the stats
+ * reset first. range_tracking_is_correct() now covers it, and the lesson is
+ * recorded there: a test that sets up a different state than the firmware runs
+ * in is not testing the firmware.
+ *
  * Run: python tools/test-alloc-host.py
  */
 #include <stdint.h>
@@ -245,6 +251,61 @@ static void region_contract(void)
     check(pjs_test_heap_live_blocks() == 0, "no blocks left live");
 }
 
+/* The payload range must be seeded by the first allocation, not by a sentinel.
+ *
+ * This is the regression guard for the first Gate 1A hardware run, which failed
+ * `test.region_lo` reporting `payload range=00000000 .. 40800118`. The region
+ * check itself was fine - out_of_region stayed 0 - what was wrong was the
+ * reported low bound. pjs_host_alloc_stats_reset() installed lo =
+ * PJS_REGION_HI and `if (lo < g_stats.lo)` could then only lower it; the target
+ * never calls that reset, so lo stayed at the zero-initialised 0, no payload
+ * could ever be lower, and the bound was reported as 0x00000000.
+ *
+ * The earlier version of this file called the reset before each assertion,
+ * which installed the sentinel and hid the defect - it exercised a state the
+ * firmware never runs in. reset() now zeroes the range so it reproduces the
+ * boot state exactly, and that is what makes this check mean something here.
+ */
+static void range_tracking_is_correct(void)
+{
+    pjs_heap_stats_t st;
+    void *a;
+    void *b;
+    uintptr_t pa, pb;
+
+    printf("-- payload range tracking (boot state, no sentinel) --\n");
+    pjs_test_heap_reset();
+    pjs_host_alloc_stats_reset();
+
+    pjs_host_alloc_stats(&st);
+    check(st.allocs == 0u && st.lo == 0u && st.hi == 0u,
+          "a freshly reset range has no samples");
+
+    /* First allocation seeds the range. This is the assertion the old code
+     * failed: it left lo at 0, because 0 can never be lowered. */
+    a = pjs_host_alloc(16, 4u);
+    pa = (uintptr_t)a;
+    pjs_host_alloc_stats(&st);
+    check(a != NULL, "the first allocation succeeds");
+    check(st.lo == pa, "the first allocation seeds the low bound");
+    check(st.hi == pa + 16u, "the first allocation seeds the high bound");
+    check(st.allocs == 1u, "the first allocation is counted");
+
+    /* The second widens the range only in the direction it actually lies. */
+    b = pjs_host_alloc(64, 4u);
+    pb = (uintptr_t)b;
+    pjs_host_alloc_stats(&st);
+    check(b != NULL, "the second allocation succeeds");
+    check(st.lo == (pa < pb ? pa : pb), "the low bound follows the lowest payload");
+    check(st.hi == (pa > pb ? pa + 16u : pb + 64u),
+          "the high bound follows the highest payload");
+    check(st.allocs == 2u, "both allocations are counted");
+
+    pjs_host_free(a, 4u);
+    pjs_host_free(b, 4u);
+    check(pjs_test_heap_live_blocks() == 0, "no blocks left live");
+}
+
 /* The region check itself.
  *
  * A check that can only be taken on faith is not a check. On the board the
@@ -302,6 +363,8 @@ int main(void)
     degenerate_inputs();
     printf("\n");
     region_contract();
+    printf("\n");
+    range_tracking_is_correct();
     printf("\n");
     region_window_is_enforced();
 

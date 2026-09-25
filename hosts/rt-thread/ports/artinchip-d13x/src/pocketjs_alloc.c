@@ -146,8 +146,21 @@ void pjs_host_alloc_stats_reset(void)
     g_stats.bad_align = 0u;
     g_stats.out_of_region = 0u;
     g_stats.max_size = 0u;
-    g_stats.lo = PJS_REGION_HI;
-    g_stats.hi = PJS_REGION_LO;
+    /* The range is zeroed, not set to an inverted sentinel, so that this
+     * produces *exactly* the state of a freshly-booted static struct. That
+     * matters: the range is seeded by the first accounted allocation (see
+     * pjs_account), so "after a reset" and "before any allocation" are the same
+     * state and the host test can exercise the boot path.
+     *
+     * The first version set lo = PJS_REGION_HI here and relied on
+     * `if (lo < g_stats.lo)` to lower it. That worked only because this
+     * function was called - and on the target it never was, so lo stayed at the
+     * zero-initialised 0, no payload could ever be lower, and the low bound was
+     * reported as 0x00000000. The first hardware run caught it
+     * (test.region_lo FAIL). A bound that is only correct when somebody
+     * remembers to call a reset is not a bound. */
+    g_stats.lo = 0u;
+    g_stats.hi = 0u;
 }
 
 /* ------------------------------------------------------------------ *
@@ -178,27 +191,39 @@ static void *pjs_account(void *payload, uint32_t size)
     uintptr_t lo = (uintptr_t)payload;
     uintptr_t hi = lo + (uintptr_t)size;
 
-    g_stats.allocs++;
-    if (size > g_stats.max_size) {
-        g_stats.max_size = size;
-    }
-    if (lo < g_stats.lo) {
-        g_stats.lo = lo;
-    }
-    if (hi > g_stats.hi) {
-        g_stats.hi = hi;
-    }
     /* The payload must lie wholly inside the region: a block that starts inside
-     * but ends past the end would corrupt whatever follows the heap. */
+     * but ends past the end would corrupt whatever follows the heap. Checked
+     * before anything is recorded, so a refused block cannot seed or widen the
+     * reported range. */
     if (lo < PJS_REGION_LO || hi > PJS_REGION_HI) {
         g_stats.out_of_region++;
         rt_kprintf(PJS_TAG "FATAL: %s returned %p..%p, outside [%p,%p)\n",
                    PJS_HEAP_NAME, (void *)lo, (void *)hi,
                    (void *)PJS_REGION_LO, (void *)PJS_REGION_HI);
         pjs_heap_free(payload);
-        g_stats.allocs--;
         return RT_NULL;
     }
+
+    if (size > g_stats.max_size) {
+        g_stats.max_size = size;
+    }
+    /* Seed the range from the first accepted allocation, then only widen it.
+     * Keyed on allocs == 0 rather than on a sentinel value, because a static
+     * struct is zero-initialised and the target never calls the reset: seeding
+     * is what makes the boot state correct, not the sentinel. See
+     * pjs_host_alloc_stats_reset(). */
+    if (g_stats.allocs == 0u) {
+        g_stats.lo = lo;
+        g_stats.hi = hi;
+    } else {
+        if (lo < g_stats.lo) {
+            g_stats.lo = lo;
+        }
+        if (hi > g_stats.hi) {
+            g_stats.hi = hi;
+        }
+    }
+    g_stats.allocs++;
     return payload;
 }
 
