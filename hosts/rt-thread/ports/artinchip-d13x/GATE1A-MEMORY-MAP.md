@@ -536,9 +536,9 @@ Three things are worth reading carefully rather than just checking for `PASS`:
 Then, on demand:
 
 ```
-msh /> pjs_mem            # heap map, read-only
-msh /> pjs_mem_test 5000  # a longer run
-msh /> pjs_abi_panic      # deliberate panic; must abort and halt
+aic /> pjs_mem            # heap map, read-only
+aic /> pjs_mem_test 5000  # a longer run
+aic /> pjs_abi_panic      # deliberate panic; must abort and halt
 ```
 
 `pjs_abi_panic` is still the one Gate 0 item never captured. Running it here
@@ -863,5 +863,42 @@ unchanged by this work and is still flagged as such in
 
 **Per the roadmap, Gate 1A is where this stops.** No RGB565 renderer, no QuickJS,
 no framebuffer and no GE until Gate 1 is reviewed.
+
+### 11.4 Hardware run 3 — the same numbers, to the byte
+
+A third capture, on the same image, arrived as a **boot autorun** rather than a
+typed session (`main.c:103-111` runs both probes when `LPKG_POCKETJS_AUTORUN` is
+set, which is why no command is echoed and an SDMC driver message is interleaved
+with the results). `pass=47 fail=0` and `pass=26 fail=0` again.
+
+What makes run 3 worth recording is not that it passed but that it passed
+**identically**. Not just the counts — the absolute values:
+
+| Reading | run 2 | run 3 |
+|---------|-------|-------|
+| `region` | `40800000 .. 41000000 (8388608 B)` | same |
+| `live / peak / allocs / frees / fails` | `0 / 256 / 4610 / 4610 / 0` | same |
+| `checksum` / `want` | `0x8081dab0` / `0x8081dab0` | same |
+| `sram` used, before → after | `22556 -> 22556` | same |
+| `psram` | `pool=8388608 used=48 max=328 free=8388560` | same |
+| `host` counters | `allocs 8 -> 4618  frees 8 -> 4618` | same |
+| `host` payload range | `40800018 .. 40800118` | same |
+
+The payload addresses reproduce to the byte across two boots and two flashes, so
+the allocator's address sequence is **deterministic**. That matters beyond
+tidiness: a retained UI core that reasons about node identity and layout needs
+allocation order to be reproducible, and this is the first evidence that it is.
+
+SRAM is read twice in this capture — once by `pjs_abi` at the start
+(`total=1048576 used=22556 max_used=22556`, via `rt_memory_info`) and once by
+`pjs_mem_test` after the 1000-round stress (`used=22556`, `max=22556`). Both
+readings are unchanged, so the seam is fully off SRAM under an autorun that runs
+the two probes back to back without an operator in between.
+
+Run 3 does **not** close Gate 0 items 0c and 0e. It contains no `pjs_abi_panic`
+invocation, and neither item can be closed by an autorun — the panic halts the
+board, so it is the one probe deliberately excluded from autorun and must be
+typed at the prompt (`aic />`, not `msh />`). See
+[GATE0-REPORT.md](GATE0-REPORT.md) §9.
 
 
