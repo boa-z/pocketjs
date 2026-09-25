@@ -256,17 +256,24 @@ msh /> pjs_abi_panic    # deliberate panic; must abort and halt
 
 ## Memory plan
 
-Planning figures - `PSRAM_SW`'s size in particular has not been read from this
-board's configuration yet. Gate 1's first task is to report the real numbers
-from the current SDK config instead of inheriting the assumption.
+The product board baseline sets `AIC_PSRAM_SW_SIZE=0x0`, which means `PSRAM_SW`
+does not exist, `MEM_PSRAM_SW` is not an enumerator, and the only PSRAM heap is
+CMA - which the PocketJS allocator must not use. Gate 1A enables PSRAM_SW in the
+port's own defconfig at **8 MiB**; see [GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md)
+for the derivation and the full map.
 
 ```
-SRAM (1 MiB)          RT-Thread kernel, interrupts, thread stacks,
-                      driver state, hot native state
-PSRAM_SW (16 MiB?)    PocketJS Rust heap, QuickJS heap, UI tree,
-                      DrawList, text, general runtime buffers
-PSRAM_CMA             framebuffer, GE, DMA, MPP buffers
+SRAM (1 MiB)           RT-Thread kernel, interrupts, thread stacks,
+                       driver state, hot native state, default rt_malloc heap
+PSRAM_CMA (~7.77 MiB)  framebuffer, GE, DMA, MPP buffers
+                       + the firmware image itself (text/rodata/data/bss)
+PSRAM_SW (8 MiB)       PocketJS Rust heap, UI tree, DrawList, text,
+                       and later the QuickJS heap
 ```
+
+8 MiB / ~7.77 MiB is a bring-up baseline, not a final budget; the split is
+re-budgeted once Gate 2 framebuffer and later GE/video numbers exist. The
+ordinary PocketJS allocator must never consume CMA.
 
 The ordinary PocketJS allocator must never consume CMA. Gate 0 uses the
 RT-Thread system heap behind a single seam (`pjs_host_alloc`); Phase 1 repoints
