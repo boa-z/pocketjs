@@ -4,9 +4,9 @@
 current SDK configuration and the linker template — **not** by assuming.
 
 **Date:** 2026-09-25
-**Status:** change applied, **firmware linked**, map read from `d13x.map` and
-statically verified. One efuse-dependent boot path is open and needs a board-side
-check (§5.4).
+**Status:** Gate 1A **implemented and built**; map read from `d13x.map` and
+statically verified. **NOT HARDWARE VALIDATED** — one efuse-dependent boot path
+and the on-target assertion are still open (§5.4, §7, §8).
 
 ---
 
@@ -312,6 +312,57 @@ editing `pocketjs_alloc.c` recompiles one object plus the relink — a handful o
 deletes, well inside the budget — so Gate 1A development proceeds normally
 against this output directory.
 
+### 6.1 The Gate 1A build
+
+The same fresh-directory technique carried the Gate 1A sources. A second scratch
+project name (`pocketjs-g1a`) was used, again a copy of the port's defconfig
+differing only in `CONFIG_PRJ_DEFCONFIG_FILENAME`.
+
+```
+157 objects, 0 safe-delete hits, Luban-Lite is built successfully
+```
+
+The four changed translation units all rebuilt (`main.c`, `pocketjs_alloc.c`,
+`pocketjs_host.c`, `pocketjs_mem.c`), and the Gate 1A symbols are all present in
+the linked image:
+
+```
+pjs_mem_report          0x4001e8c4
+pjs_mem_test            0x4001eca4
+pjs_host_alloc_stats    present
+pjs_probe_alloc_stress  present
+aic_memheap_malloc      present
+aic_memheap_free        present
+rt_object_find          present
+rt_memheap_info         present
+```
+
+and all four MSH commands registered in the FSymTab:
+
+```
+__fsym_pjs_abi  __fsym_pjs_abi_panic  __fsym_pjs_mem  __fsym_pjs_mem_test
+```
+
+The map reconfirms §5.1–5.3 with the new image:
+
+```
+PSRAM_CMA  0x40000000 + 0x800000
+PSRAM_SW   0x40800000 + 0x800000
+__psram_sw_heap_start = 0x40800000
+__psram_sw_heap_end   = 0x41000000
+__heap_start/__heap_end = 0x30040000 / 0x30140000   (SRAM, unchanged)
+```
+
+Firmware, this build:
+
+```
+d13x.bin   230,432 B   sha256 03d97f42…
+d13x.elf 3,574,240 B   sha256 64efdc9a…
+```
+
+`aic_memheap_free` was previously *not* linked (nothing called it); it is now,
+which is the expected consequence of the backend swap.
+
 ---
 
 ## 7. Status
@@ -327,22 +378,86 @@ against this output directory.
 - The link sections are confirmed **not** to move.
 - MPP/GE/VE/DMA, the bootloader overlap and `__dtb_pos_f` are all checked and
   cleared (§5.5).
+- Gate 1A is **implemented and built**: the allocator backend is
+  `aic_memheap_malloc(MEM_PSRAM_SW)`, `pjs_mem` and `pjs_mem_test` are linked,
+  and the host test passes 33/33 including the region contract.
 
-**Open, board-side:**
+**NOT HARDWARE VALIDATED.** Nothing in this document is a measurement from a
+running board. Everything is a reading from the linked image, the resolved
+config, or the SDK source.
 
-- The efuse-dependent `aic_memheap_init()` path in §5.4 — print
-  `aic_get_ram_size()` on the first Gate 1A boot and confirm the PSRAM_SW heap
-  initialises.
+**Open, board-side — this is what remains:**
 
-**Not started:**
+1. §5.4 — the efuse-dependent `aic_memheap_init()` path. The boot banner now
+   prints `efuse=<n> MiB, linked=16 MiB`, so the first boot either shows `16`
+   (good) or does not reach the banner at all (the assert fired before `main`).
+2. `pjs_mem_test` — the Gate 1A assertion. Must end `RESULT PASS` with
+   `out_of_region=0`, `live=0`, `fails=0`, and `sram max` unchanged.
+3. `pjs_mem` — the heap map, for the record.
+4. The Gate 0 regression: `pjs_abi` now allocates through PSRAM_SW, so it must
+   still print 47/47 and `RESULT PASS`.
 
-- No Gate 1A code yet. `pjs_host_alloc(size, align)` is still exactly the Gate 0
-  implementation backed by `rt_malloc`; the backend swap begins only now that the
-  map is statically verified.
+Until those are captured, the correct statement is: **Gate 1A is implemented and
+statically verified, and not hardware validated.**
 
 ---
 
-## 8. Evidence
+## 8. On-target procedure
+
+Serial 115200 8N1. Both probes run automatically at boot, so a single console
+capture covers items 1–4 above. Expect, in order:
+
+```
+PocketJS D13x port - Gate 1A firmware (Retained UI Core: allocator)
+  board    : d50t-2-lite (D133ECS, Xuantie E907FDP)
+  abi      : RV32IMAFDC / ILP32D hard-float
+  rev      : <port revision>
+  psram    : efuse=16 MiB, linked=16 MiB          <- §5.4, must be 16/16
+  runtime  : packages/third-party/pocketjs
+  commands : pjs_abi, pjs_mem, pjs_mem_test [rounds], pjs_abi_panic
+
+[pjs-abi] ... SUMMARY pass=47 fail=0
+[pjs-abi] RESULT PASS
+
+[pjs-mem] PocketJS D13x - Gate 1A PSRAM_SW allocator test
+[pjs-mem] sram before: total=... used=... max=...
+[pjs-mem] region     : 0x40800000 .. 0x41000000  (8388608 B)
+[pjs-mem] iters      : 1000
+[pjs-mem] PASS  test.align4 ... test.align64
+[pjs-mem] PASS  test.box / test.vec / test.string
+[pjs-mem]       rounds=1000 box_ok=1 vec_ok=1 string_ok=1
+[pjs-mem]       checksum=0x... want=0x...
+[pjs-mem]       live=0 peak=... allocs=... frees=... fails=0
+[pjs-mem] PASS  test.psram_sw_carried_the_load
+[pjs-mem] PASS  test.sram_used_flat / test.sram_max_flat
+[pjs-mem] SUMMARY pass=... fail=0
+[pjs-mem] RESULT PASS
+```
+
+Two things are worth reading carefully rather than just checking for `PASS`:
+
+- `test.psram_sw_carried_the_load` is the *positive* proof: PSRAM_SW's
+  `max_used` must have moved by at least Rust's reported peak. If it did not, the
+  allocations went somewhere else.
+- `test.sram_max_flat` is the *negative* proof, and the one most likely to be
+  noisy. A non-zero SRAM `max` growth means either a leak into the 1 MiB heap or
+  an incidental console allocation; the log prints both numbers so the two can
+  be told apart.
+
+Then, on demand:
+
+```
+msh /> pjs_mem            # heap map, read-only
+msh /> pjs_mem_test 5000  # a longer run
+msh /> pjs_abi_panic      # deliberate panic; must abort and halt
+```
+
+`pjs_abi_panic` is still the one Gate 0 item never captured. Running it here
+closes that gap too — but it halts the board, so run it last.
+
+---
+
+## 9. Evidence
 
 ```
 target/configs/d13x_d50t-2-lite_rt-thread_D50T-2-Lite_defconfig   (baseline, PSRAM_SW=0x0)
@@ -355,10 +470,12 @@ bsp/artinchip/sys/d13x/ram_param.c                                 (lines 100-20
 bsp/artinchip/sys/d13x/link_script/gcc_aic.ld.S                    (lines 50, 79-80, 108-113)
 bsp/artinchip/sys/d13x/link_script/gcc_aic.ld                      (regenerated, verified)
 application/baremetal/bootloader/ldscript/d13x_bootloader_gcc.ld   (bootloader region)
+kernel/rt-thread/src/memheap.c                                     (alignment guarantee)
 SConstruct                                                         (lines 84-88)
 
-output/d13x_d50t-2-lite_rt-thread_pocketjs-g1verify/images/d13x.map   (Gate 1A link)
-output/d13x_d50t-2-lite_rt-thread_pocketjs-smoke/images/d13x.map      (Gate 0 link)
+output/d13x_d50t-2-lite_rt-thread_pocketjs-g1a/images/d13x.map      (Gate 1A link)
+output/d13x_d50t-2-lite_rt-thread_pocketjs-g1verify/images/d13x.map (8 MiB split, no Gate 1A code)
+output/d13x_d50t-2-lite_rt-thread_pocketjs-smoke/images/d13x.map    (Gate 0 link)
 ```
 
 The `d13x` linker script and `board.c` are shared across the D13x family, so
