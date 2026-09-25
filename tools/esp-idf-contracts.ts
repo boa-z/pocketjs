@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { IDF_NATIVE_CALLBACKS, IDF_NATIVE_STRUCTS } from "../contracts/spec/idf-native.ts";
 import * as pocket from "../contracts/spec/pocket-package.ts";
@@ -108,11 +108,20 @@ export function generatedIdfContracts(): Map<string, string> {
     ["hosts/esp-idf/components/pocketjs_render_rgb565/include/pocketjs/render_types.h", cTypes("renderer")],
     ["hosts/esp-idf/components/pocketjs_ui_core/include/pocketjs/native_ui.h", cFunctions("ui-core", "ui_core")],
     ["hosts/esp-idf/components/pocketjs_render_rgb565/include/pocketjs/native_renderer.h", cFunctions("render-rgb565", "render_rgb565")],
+    // The RT-Thread host consumes the same contract from the same spec, so the
+    // two hosts cannot drift. Only the ui-core half is emitted: the RGB565
+    // renderer is Gate 2 and the RT-Thread port has no renderer yet. The
+    // ui_types.h emitted here is byte-identical to the ESP-IDF one because the
+    // ABI types are host-neutral; native_ui.h is parsed from the RT-Thread
+    // ui-core crate, so it tracks that crate's actual exports.
+    ["hosts/rt-thread/native/abi/src/lib.rs", rustTypes()],
+    ["hosts/rt-thread/components/pocketjs_ui_core/include/pocketjs/ui_types.h", cTypes("core")],
+    ["hosts/rt-thread/components/pocketjs_ui_core/include/pocketjs/native_ui.h", cFunctions("ui-core", "ui_core", "hosts/rt-thread")],
   ]);
 }
 
-function cFunctions(crate: string, header: string): string {
-  const source = readFileSync(resolve(root, `hosts/esp-idf/native/${crate}/src/lib.rs`), "utf8");
+function cFunctions(crate: string, header: string, hostRoot = "hosts/esp-idf"): string {
+  const source = readFileSync(resolve(root, `${hostRoot}/native/${crate}/src/lib.rs`), "utf8");
   let result = `/* Generated from native/${crate}/src/lib.rs. Do not edit. */\n#pragma once\n#include "pocketjs/${header}.h"\n`;
   const signatures = new Map<string, { args: string; result: string }>();
   for (const match of source.matchAll(/pub unsafe extern "C" fn (\w+)\(\s*([^)]*)\)\s*(?:->\s*([\w:* ]+))?\s*\{/g)) {
@@ -130,12 +139,23 @@ function cFunctions(crate: string, header: string): string {
   }
   return result;
 }
-if (import.meta.main) {
-  const check = Bun.argv.includes("--check");
+// Runs under bun (`bun tools/esp-idf-contracts.ts`) and under node
+// (`node --experimental-strip-types tools/esp-idf-contracts.ts`). `import.meta.main`
+// is a bun extension, so it is probed rather than assumed; the RT-Thread port's
+// tooling is Python/Node and must not hard-require bun to regenerate the contract.
+const invokedDirectly =
+  typeof (import.meta as { main?: boolean }).main === "boolean"
+    ? (import.meta as { main: boolean }).main
+    : process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) {
+  const check = process.argv.includes("--check");
   for (const [path, contents] of generatedIdfContracts()) {
     const file = resolve(root, path);
     if (check) {
       if (!existsSync(file) || readFileSync(file, "utf8") !== contents) throw new Error(`stale generated contract: ${path}`);
-    } else await Bun.write(file, contents);
+    } else {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, contents);
+    }
   }
 }
