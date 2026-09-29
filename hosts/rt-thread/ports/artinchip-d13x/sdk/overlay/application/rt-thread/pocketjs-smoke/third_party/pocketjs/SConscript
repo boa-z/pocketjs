@@ -50,8 +50,11 @@ group = DefineGroup(
     Glob('src/*.c'),
     depend=['LPKG_USING_POCKETJS'],
     CPPPATH=[os.path.join(cwd, 'include'), os.path.join(cwd, 'src')],
-    LIBS=[LIB_NAME],
-    LIBPATH=[LIB_DIR],
 )
+
+# Explicit link inputs avoid the SDK's whole-archive wrapper for LIBS.
+# The archive stays a tracked SCons dependency and is lazily extracted.
+if GetDepend('LPKG_USING_POCKETJS'):
+    group += [File(LIB_FILE)]
 
 Return('group')

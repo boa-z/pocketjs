@@ -8,12 +8,12 @@ second copy that silently drifts.
 
 What it writes into the SDK:
 
-  packages/third-party/pocketjs/       from sdk/overlay/, plus the vendored port
+  application/rt-thread/pocketjs-smoke/third_party/pocketjs/       from sdk/overlay/, plus the vendored port
                                        sources (ABI header, host glue, Rust
                                        crate) so the package rebuilds in place
   application/rt-thread/pocketjs-smoke/ the thin Gate 0 entry point
   target/configs/…_pocketjs-smoke_defconfig
-  packages/third-party/Kconfig         one injected `source` line
+  No global SDK Kconfig or package files are modified.
 
 It never touches the Rust archive: ``lib/`` receives only a ``.gitignore`` so a
 built ``.a`` can be dropped there without ever being committable.
@@ -36,7 +36,7 @@ import portenv as env
 
 OVERLAY_DIR = env.PORT_ROOT / "sdk" / "overlay"
 
-PKG_REL = Path("packages") / "third-party" / "pocketjs"
+PKG_REL = Path("application") / "rt-thread" / "pocketjs-smoke" / "third_party" / "pocketjs"
 APP_REL = Path("application") / "rt-thread" / "pocketjs-smoke"
 
 # Generated banner identity, written next to main.c so a plain quoted include
@@ -63,17 +63,6 @@ VENDORED = {
     PKG_REL / "rust" / "abi-probe" / "src" / "lib.rs":
         env.PORT_ROOT / "rust" / "abi-probe" / "src" / "lib.rs",
 }
-
-# Idempotent one-line injections into existing SDK files. Replacing whole SDK
-# files would make this overlay fight every upstream change; inserting a single
-# marked line does not.
-INJECTIONS = [
-    (
-        Path("packages") / "third-party" / "Kconfig",
-        'source "packages/third-party/pocketjs/Kconfig"',
-        'source "packages/third-party/at24cxx/Kconfig"',
-    ),
-]
 
 # Paths produced by earlier revisions of this overlay. Removed if present so a
 # stale copy can never be silently compiled alongside the current one.
@@ -161,36 +150,11 @@ def _overlay_files() -> list[tuple[Path, Path]]:
         # scaffolding for this repo and must never reach the SDK.
         if src.name == ".gitkeep":
             continue
-        pairs.append((src, src.relative_to(OVERLAY_DIR)))
+        rel = src.relative_to(OVERLAY_DIR)
+        if rel.parts[0] not in ("application", "target"):
+            raise SystemExit(f"SDK write outside application/target whitelist: {rel}")
+        pairs.append((src, rel))
     return pairs
-
-
-def _apply_injection(sdk: Path, rel: Path, line: str, anchor: str, check: bool) -> str:
-    """Ensure `line` appears after `anchor` in sdk/rel. Returns a status."""
-    path = sdk / rel
-    if not path.is_file():
-        raise SystemExit(f"injection target missing: {path}")
-
-    text = path.read_text(encoding="utf-8")
-    if line in text.splitlines():
-        return "same"
-    if check:
-        return "drift"
-
-    lines = text.splitlines(keepends=True)
-    for i, existing in enumerate(lines):
-        if existing.strip() == anchor:
-            indent = existing[: len(existing) - len(existing.lstrip())]
-            lines.insert(i + 1, f"{indent}{line}\n")
-            break
-    else:
-        raise SystemExit(
-            f"anchor not found in {rel}: {anchor!r}\n"
-            "The SDK layout changed; update INJECTIONS in apply-sdk.py."
-        )
-
-    path.write_text("".join(lines), encoding="utf-8")
-    return "update"
 
 
 def main() -> int:
@@ -243,10 +207,6 @@ def main() -> int:
     # 4. the firmware banner's build identity (generated, not copied)
     actions.append((_sync_text(sdk / BUILD_HEADER, build_identity_header(), args.check),
                     _rel(BUILD_HEADER)))
-
-    # 5. injections into existing SDK files
-    for rel, line, anchor in INJECTIONS:
-        actions.append((_apply_injection(sdk, rel, line, anchor, args.check), _rel(rel)))
 
     # 6. prune anything left over from an earlier overlay layout
     for rel in STALE:

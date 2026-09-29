@@ -9,7 +9,7 @@
  *
  * Still deliberately tiny. Gate 1A is Retained UI Core work, and it stops at the
  * allocator: no UI Core, no QuickJS, no framebuffer, no GE. `main` announces what
- * is running and then hands off to the probes in packages/third-party/pocketjs.
+ * is running and then hands off to the probes in application/rt-thread/pocketjs-smoke/third_party/pocketjs.
  *
  * Two probes run once automatically, in this order, so the evidence reaches the
  * console without an operator at the MSH prompt - on bring-up hardware there is
@@ -57,7 +57,7 @@
 extern uint32_t aic_get_ram_size(void);
 
 #if defined(LPKG_USING_POCKETJS)
-/* Implemented in packages/third-party/pocketjs/src/. */
+/* Implemented in application/rt-thread/pocketjs-smoke/third_party/pocketjs/src/. */
 extern int pjs_abi_run(void);
 extern int pjs_mem_report(void);
 extern int pjs_mem_test(uint32_t iters);
@@ -97,7 +97,7 @@ int main(void)
                (unsigned)(AIC_PSRAM_SIZE / 1024u / 1024u));
 
 #if defined(LPKG_USING_POCKETJS)
-    rt_kprintf("  runtime  : packages/third-party/pocketjs\n");
+    rt_kprintf("  runtime  : application/rt-thread/pocketjs-smoke/third_party/pocketjs\n");
     rt_kprintf("  commands : pjs_abi, pjs_mem, pjs_mem_test [rounds], pjs_abi_panic\n");
 
   #if defined(LPKG_POCKETJS_AUTORUN)

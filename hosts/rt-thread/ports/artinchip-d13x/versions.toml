@@ -24,17 +24,17 @@ remote = "https://github.com/boa-z/pocketjs.git"
 #   * Re-deriving the board on top of v1.0.3 would have meant back-porting the
 #     chip Kconfig, the memory map and the PSRAM bring-up, i.e. exactly the
 #     "unrecorded SDK upgrade" the spec forbids.
-local_path = "C:/Users/JCSH/Documents/Project/D50T-2-Lite/luban-lite-jc-d50t-rev"
+local_path = "C:/Users/JCSH/.codex/worktrees/d50t-pocketjs-port/luban-lite-jc-d50t-rev"
 remote = "https://github.com/boa-w/luban-lite-jc-d50t-rev.git"
 release = "Luban-Lite V1.3.2"
 
-# Product branch the port branch was cut from.
-base_branch = "codex/d50t-meter-adaptation"
-base_commit = "f7572509111d1c70962e6347e5ad7bc87b77fbba"
+# Vendor SDK ancestry; board support is maintained under target/.
+base_branch = "master"
+base_commit = "c5807f9e7d18292f920dafaa018b8174635085c4"
 
 # The independent PocketJS port branch. All D13x port work lands here so the
 # product line stays untouched; this branch is never merged back automatically.
-port_branch = "pocketjs-d13x"
+port_branch = "codex/port-pocketjs"
 
 [rust]
 # Pinned deliberately. Matches engine/ui-cabi/rust-toolchain.toml so Gate 1

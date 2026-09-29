@@ -47,9 +47,8 @@ SEARCH_GLOBS = ("*.h", "*.c")
 # up as modified means the product line is drifting under the port's feet.
 PORT_PATHS = (
     "application/rt-thread/pocketjs-smoke/",
-    "packages/third-party/pocketjs/",
+    "application/rt-thread/pocketjs-smoke/third_party/pocketjs/",
     "target/configs/d13x_d50t-2-lite_rt-thread_pocketjs-smoke_defconfig",
-    "packages/third-party/Kconfig",
 )
 
 

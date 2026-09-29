@@ -6,7 +6,7 @@ first, on its own, so that when the link fails it is unambiguous whether the
 Rust compile or the Luban-Lite link is at fault.
 
   1. cargo build      -> libpocketjs_abi_probe.a   (release, ilp32d)
-  2. stage            -> <sdk>/packages/third-party/pocketjs/lib/
+  2. stage            -> <sdk>/application/rt-thread/pocketjs-smoke/third_party/pocketjs/lib/
   3. scons --apply-def-> .config for the pocketjs-smoke scheme
   4. scons -jN        -> firmware ELF + flashable images
   5. collect          -> images + re-run the checks into the validation tree
@@ -42,7 +42,7 @@ import portenv as pe
 LIB_STEM = "pocketjs_abi_probe"
 
 # The runtime package inside the SDK. Must match PKG_REL in apply-sdk.py.
-PKG_REL = Path("packages") / "third-party" / "pocketjs"
+PKG_REL = Path("application") / "rt-thread" / "pocketjs-smoke" / "third_party" / "pocketjs"
 DEFCONFIG = "d13x_d50t-2-lite_rt-thread_pocketjs-smoke_defconfig"
 
 
@@ -238,7 +238,7 @@ def main() -> int:
     else:
         print(f"warning: ELF not found at {elf}", file=sys.stderr)
         return 1
-    return 0
+    return 1 if any(rc != 0 for _, rc in checks) else 0
 
 
 if __name__ == "__main__":
