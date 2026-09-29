@@ -7,7 +7,7 @@
 # Gate 0 application entry point.
 #
 # This is deliberately a thin wrapper: the runtime lives in the
-# packages/third-party/pocketjs package, and this app only decides when to run
+# application/rt-thread/pocketjs-smoke/third_party/pocketjs package, and this app only decides when to run
 # the conformance probe. Keeping them separate is what lets the eventual
 # PocketJS application replace this file without touching the runtime package.
 
@@ -21,5 +21,7 @@ group = DefineGroup(
     depend=['AIC_POCKETJS_SMOKE_APP'],
     CPPPATH=[cwd],
 )
+
+group += SConscript('third_party/pocketjs/SConscript')
 
 Return('group')

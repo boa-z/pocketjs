@@ -157,7 +157,7 @@ def sdk_is_dirty() -> bool:
 
 
 def port_branch() -> str:
-    return _toml_str("luban_lite", "port_branch") or "pocketjs-d13x"
+    return _toml_str("luban_lite", "port_branch") or "codex/port-pocketjs"
 
 
 def sdk_base_commit() -> str:
