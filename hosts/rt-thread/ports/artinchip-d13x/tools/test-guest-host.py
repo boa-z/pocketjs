@@ -86,6 +86,20 @@ int pjs_test_pump_frame(void) {
 }
 void pjs_ota_mark_unhealthy(void) { ++test_health_failures; }
 unsigned pjs_test_health_failures(void) { return test_health_failures; }
+#ifdef LPKG_USING_POCKETJS_PACKAGE
+#include "pjs_touch_device.h"
+static pjs_touch_state_t test_touch;
+int pjs_touch_device_start(unsigned w, unsigned h) { pjs_touch_state_init(&test_touch, w, h); return RT_EOK; }
+void pjs_touch_device_stop(void) { pjs_touch_state_init(&test_touch, 0, 0); }
+int pjs_touch_device_read(pocketjs_ui_touch_t *p) {
+    return test_touch.overflows || test_touch.invalid ? -RT_ERROR : (int)pjs_touch_state_read(&test_touch, p);
+}
+void pjs_touch_device_status(void) {}
+void pjs_test_touch(unsigned event, unsigned x, unsigned y) {
+    pjs_touch_sample_t sample = {0, event, x, y};
+    pjs_touch_state_feed(&test_touch, &sample, 1);
+}
+#endif
 int main(void) {
     int result = pjs_budget_selftest();
     result |= pjs_js_selftest();
@@ -100,6 +114,8 @@ int main(void) {
     result |= pjs_package_selftest();
     extern int pjs_package_runtime_selftest(void);
     result |= pjs_package_runtime_selftest();
+    extern int pjs_touch_queue_selftest(void);
+    result |= pjs_touch_queue_selftest();
 #endif
     return result ? 1 : 0;
 }
@@ -120,7 +136,8 @@ int main(void) {
         embedded = repo/f'.pocket-build/d13x/{app_name}/embedded'
         cmd += ['-DLPKG_USING_POCKETJS_PACKAGE', '-DPJS_CAN_OTA', '-I', str(package/'include'), '-I', str(embedded),
                 str(package/'src/package.c'), str(embedded/f'pocketjs_package_{app_name}.c'),
-                str(app/'pjs_package.c'), str(app/'pjs_hero_session.c')]
+                '-I', str(app), str(app/'pjs_package.c'), str(app/'pjs_hero_session.c'),
+                str(app/'pjs_touch_input.c'), str(app/'tests/touch_queue_test.c')]
     if args.ui:
         target = 'x86_64-pc-windows-gnu' if os.name == 'nt' else 'x86_64-unknown-linux-gnu'
         rust = dest/'rust'
