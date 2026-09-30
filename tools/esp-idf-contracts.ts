@@ -108,13 +108,10 @@ export function generatedIdfContracts(): Map<string, string> {
     ["hosts/esp-idf/components/pocketjs_render_rgb565/include/pocketjs/render_types.h", cTypes("renderer")],
     ["hosts/esp-idf/components/pocketjs_ui_core/include/pocketjs/native_ui.h", cFunctions("ui-core", "ui_core")],
     ["hosts/esp-idf/components/pocketjs_render_rgb565/include/pocketjs/native_renderer.h", cFunctions("render-rgb565", "render_rgb565")],
-    // The RT-Thread host consumes the same contract from the same spec, so the
-    // two hosts cannot drift. Only the ui-core half is emitted: the RGB565
-    // renderer is Gate 2 and the RT-Thread port has no renderer yet. The
-    // ui_types.h emitted here is byte-identical to the ESP-IDF one because the
-    // ABI types are host-neutral; native_ui.h is parsed from the RT-Thread
-    // ui-core crate, so it tracks that crate's actual exports.
+    // RT-Thread shares the generated UI and renderer contract.
     ["hosts/rt-thread/native/abi/src/lib.rs", rustTypes()],
+    ["hosts/rt-thread/components/pocketjs_render_rgb565/include/pocketjs/render_types.h", cTypes("renderer")],
+    ["hosts/rt-thread/components/pocketjs_render_rgb565/include/pocketjs/native_renderer.h", cFunctions("render-rgb565", "render_rgb565", "hosts/rt-thread")],
     ["hosts/rt-thread/components/pocketjs_ui_core/include/pocketjs/ui_types.h", cTypes("core")],
     ["hosts/rt-thread/components/pocketjs_ui_core/include/pocketjs/native_ui.h", cFunctions("ui-core", "ui_core", "hosts/rt-thread")],
   ]);

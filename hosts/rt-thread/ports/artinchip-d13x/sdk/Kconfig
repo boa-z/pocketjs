@@ -78,3 +78,8 @@ config LPKG_POCKETJS_UI_CORE_AUTORUN
       the prompt. Useful on bring-up hardware with no interactive terminal.
 
 endif
+
+config LPKG_USING_POCKETJS_RENDER_RGB565
+    bool "PocketJS RGB565 software renderer"
+    depends on LPKG_USING_POCKETJS_UI_CORE
+    default n

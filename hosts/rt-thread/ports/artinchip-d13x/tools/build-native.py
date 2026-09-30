@@ -6,10 +6,11 @@ When an ABI or link problem shows up, it must be obvious whether the Rust
 compile or the Luban-Lite link is at fault, so the two are never entangled
 until Gate 2 is stable.
 
-Two archives are produced, and the Gate 1 firmware links both:
+Three archives are produced for the Gate 2 firmware:
 
   abi-probe   libpocketjs_abi_probe.a          the Gate 0 conformance probe
   ui-core     libpocketjs_rtthread_ui_core.a   the retained UI core
+  render-rgb565 libpocketjs_rtthread_render_rgb565.a the software renderer
 
 They are independent archives that bundle the same dependency graph: `core`,
 `alloc`, `compiler_builtins`, and `pocketjs-rtthread-runtime`. A Rust `staticlib`
@@ -37,11 +38,8 @@ are properties of the crates rather than flags passed here:
     ESP-IDF host, where `pocketjs-idf-runtime` is the only declarer and both
     `ui-core` and `render-rgb565` consume it.
 
-The profiles are not aligned today: the probe keeps `debug = true` so Gate 0's
-static verification can read line tables, while the UI core optimises for speed.
-So the two copies of a shared crate are not byte-identical and the linker picks
-whichever archive it reaches first. Harmless - same sources - but it does mean
-archive order decides whose codegen wins.
+All three archives use an identical release profile and shared runtime features.
+The build checks those profiles before invoking Cargo.
 
 Usage:
     python tools/build-native.py [--crate NAME ...] [--receipt PATH] [--debug]
@@ -101,6 +99,13 @@ def crates() -> list[Crate]:
             # that binds GlobalAlloc and the panic handler to the host seam.
             extra_args=("--no-default-features",),
             note="retained UI core (host-level crate, staged by this port)",
+        ),
+        Crate(
+            name="render-rgb565",
+            manifest_dir=pe.ui_core_dir().parent / "render-rgb565",
+            lib_stem="pocketjs_rtthread_render_rgb565",
+            extra_args=("--no-default-features",),
+            note="RGB565 software renderer",
         ),
     ]
 

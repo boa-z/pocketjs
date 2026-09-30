@@ -142,7 +142,17 @@ UI_CORE_EXPORTED = (
 # `pjs_host_log` is the point: it is defined in C, and while nothing on the Rust
 # side called it the linker had no reason to keep it. Its presence in the final
 # ELF is the only proof that the Rust -> C log direction is really wired.
+RENDER_EXPORTED = (
+    "pocketjs_native_render_target_create", "pocketjs_native_render_target_destroy",
+    "pocketjs_native_render_target_invalidate", "pocketjs_native_renderer_create",
+    "pocketjs_native_renderer_destroy", "pocketjs_native_renderer_prepare",
+    "pocketjs_native_renderer_render_strip", "pocketjs_native_renderer_commit",
+    "pocketjs_native_renderer_abort",
+)
+
 ELF_REQUIRED_DEFINED = (
+    "pocketjs_native_renderer_prepare", "pocketjs_native_renderer_render_strip",
+    "pocketjs_native_renderer_commit", "pocketjs_native_renderer_abort",
     "pjs_host_log",
     "pjs_host_alloc",
     "pjs_host_free",
@@ -494,6 +504,11 @@ def main() -> int:
                     exported=UI_CORE_EXPORTED, undefined=UI_CORE_UNDEFINED),
     ]
 
+    renderer = pe.rust_target_dir() / "d13x-e907-ilp32d/release/libpocketjs_rtthread_render_rgb565.a"
+    specs.append(ArchiveSpec(label="RGB565 renderer (Gate 2)", path=renderer,
+                             exported=RENDER_EXPORTED,
+                             undefined=("pjs_host_alloc", "pjs_host_free", "pjs_host_abort",
+                                        "pocketjs_native_ui_frame_validate")))
     for spec in specs:
         check_archive(spec)
 

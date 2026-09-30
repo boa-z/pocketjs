@@ -43,4 +43,13 @@ if GetDepend('LPKG_USING_POCKETJS_UI_CORE'):
                                   os.path.join(port, 'include'), os.path.join(port, 'src')])
     group += [archive('pocketjs_rtthread_ui_core')]
 
+if GetDepend('LPKG_USING_POCKETJS_RENDER_RGB565'):
+    render = os.path.join(host, 'components', 'pocketjs_render_rgb565')
+    render_obj = os.path.join(repo, '.pocket-build', 'd13x', 'c-render')
+    Env.VariantDir(render_obj, os.path.join(render, 'src'), duplicate=0)
+    group += DefineGroup('pocketjs_render_rgb565', Glob(os.path.join(render_obj, '*.c')),
+                         depend=['LPKG_USING_POCKETJS_RENDER_RGB565'],
+                         CPPPATH=[os.path.join(render, 'include'), os.path.join(ui, 'include')])
+    group += [archive('pocketjs_rtthread_render_rgb565')]
+
 Return('group')

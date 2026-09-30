@@ -50,6 +50,8 @@ import portenv as pe
 # in the matching package SConscript, and the Crate.lib_stem in
 # tools/build-native.py, which is what actually produces them.
 ARCHIVES = (
+    ("pocketjs_rtthread_render_rgb565",
+     Path("application") / "rt-thread" / "pocketjs-smoke" / "third_party" / "pocketjs_render_rgb565"),
     ("pocketjs_abi_probe",
      Path("application") / "rt-thread" / "pocketjs-smoke" / "third_party" / "pocketjs"),
     ("pocketjs_rtthread_ui_core",

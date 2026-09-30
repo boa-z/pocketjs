@@ -24,6 +24,32 @@ Gate 0 does not touch any of that. Gate 0 answers one question:
 Until that is proven on hardware, no UI core, QuickJS, framebuffer or GE work
 starts.
 
+## Current application integration (2026-09-30)
+
+The consuming SDK worktree uses `codex/port-pocketjs`. PocketJS is a pinned source
+submodule at `application/rt-thread/pocketjs-smoke/third_party/pocketjs`, on
+`boa-z/pocketjs` branch `codex/d13x-application-dependency`. The application owns
+configuration, framebuffer presentation and the CAN-OTA endpoint. In source
+submodule mode **overlay copying is disabled**. Build with the application's
+`build.py`; the SDK's global package tree is unchanged.
+
+The historical Gate 0/1A commands below describe the original snapshot workflow.
+For this source dependency use `sdk/README.md` and the consuming application's
+README. Do not run snapshot overlay commands over an initialized submodule.
+
+Gate 1B/1C board evidence now passes: 42 UI checks, 100 stress cycles and zero
+live allocations after teardown. The 32 KiB main stack reports 22200 untouched
+bytes and an intact guard; semaphore-list checks pass before CAN open. A live
+CAN query returns `pjs-fix-stack-20260930`, IDLE, healthy=1, backend_supported=true,
+zero TX errors and zero rejected queues. Candidate download and activation remain
+unverified on hardware.
+
+Gate 2 provides the shared RGB565 renderer, generated C ABI and D13x source build.
+The application runs an offscreen pixel/lifetime probe and then presents four
+color bars through the existing framebuffer driver. **Host tests and cross-builds
+are not LCD acceptance**. Capture Gate 2 serial results, stack checks and visible
+red/green/blue/white bars before advancing hardware acceptance to QuickJS.
+
 ## Pinned baseline
 
 See [`versions.toml`](versions.toml) for the machine-readable pin. Summary:
@@ -340,8 +366,8 @@ be false and the fallback would compile.
 |------|-------|--------|
 | 0 | Rust ILP32D toolchain bridge, ABI, allocator | **PASS on hardware — closed** — 47/47 checks, `RESULT PASS`. Both evidence gaps (deliberate panic, post-reset re-run) were captured on 2026-09-25 and pass - see [GATE0-REPORT.md](GATE0-REPORT.md) §9 |
 | 1A | PSRAM_SW allocator backend + `pjs_mem` / `pjs_mem_test` | **PASS on hardware** — `pass=26 fail=0`, `RESULT PASS`, with the Gate 0 regression re-confirmed at 47/47. Run 1 found one telemetry defect in the port's own code (`test.region_lo`); fixed, rebuilt and re-run clean. A third run reproduced every value — including the payload addresses — to the byte. See [GATE1A-MEMORY-MAP.md](GATE1A-MEMORY-MAP.md) §10, §11 |
-| 1B-1C | Retained UI core (`no_std` + alloc) | not started |
-| 2 | RGB565 software renderer -> AIC framebuffer | not started |
+| 1B-1C | Retained UI core (`no_std` + alloc) | Board PASS: 42 checks, 100 cycles; stack fix verified |
+| 2 | RGB565 software renderer -> AIC framebuffer | Implemented; host pixel/lifecycle test and cross-build pass; LCD verification pending |
 | 3 | QuickJS-ng guest | not started |
 | 4 | First real PocketJS app (TSX counter) | not started |
 | 5 | `.pocket` package | not started |

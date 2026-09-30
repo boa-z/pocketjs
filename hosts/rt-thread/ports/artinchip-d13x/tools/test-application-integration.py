@@ -74,7 +74,7 @@ class ApplicationIntegration(unittest.TestCase):
         archive.write_bytes(b"archive fixture")
         with patch.object(pe, "sdk_submodule_mode", return_value=True), \
              patch.object(build, "rust_artifact", return_value=archive):
-            self.assertEqual(build.stage_rust(), [archive, archive])
+            self.assertEqual(build.stage_rust(), [archive] * len(build.ARCHIVES))
         self.assertFalse((self.repo / "lib").exists())
 
 
