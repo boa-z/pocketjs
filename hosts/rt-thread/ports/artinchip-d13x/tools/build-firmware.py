@@ -308,6 +308,10 @@ def main() -> int:
         print("\ndefconfig applied; stopping as requested.")
         return 0
 
+    rc = _run([sys.executable, str(pe.TOOLS_DIR / "prepare-quickjs.py")],
+              cwd=pe.repo_root(), label="prepare pinned QuickJS-ng")
+    if rc != 0:
+        return rc
     rc = scons(jobs=args.jobs)
     if rc != 0:
         return rc

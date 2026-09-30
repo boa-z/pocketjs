@@ -52,4 +52,24 @@ if GetDepend('LPKG_USING_POCKETJS_RENDER_RGB565'):
                          CPPPATH=[os.path.join(render, 'include'), os.path.join(ui, 'include')])
     group += [archive('pocketjs_rtthread_render_rgb565')]
 
+if GetDepend('LPKG_USING_POCKETJS_GUEST'):
+    qjs = os.path.join(repo, '.pocket-build', 'quickjs')
+    if not os.path.isfile(os.path.join(qjs, 'quickjs.c')):
+        raise SCons.Errors.UserError('Run PocketJS build.py to prepare pinned QuickJS-ng')
+    qobj = os.path.join(repo, '.pocket-build', 'd13x', 'c-quickjs')
+    Env.VariantDir(qobj, qjs, duplicate=0)
+    group += DefineGroup('pocketjs_quickjs',
+        [os.path.join(qobj, f) for f in ('dtoa.c', 'libregexp.c', 'libunicode.c', 'quickjs.c')],
+        depend=['LPKG_USING_POCKETJS_GUEST'], CPPPATH=[qjs],
+        LOCAL_CPPDEFINES=['PJS_FREESTANDING', 'NDEBUG'], LOCAL_CCFLAGS=' -std=gnu11')
+    includes = [qjs, os.path.join(port, 'include'), os.path.join(ui, 'include')]
+    for component in ('pocketjs_guest', 'pocketjs_ui_qjs'):
+        includes.append(os.path.join(host, 'components', component, 'include'))
+    for component in ('pocketjs_guest', 'pocketjs_ui_qjs'):
+        src = os.path.join(host, 'components', component, 'src')
+        obj = os.path.join(repo, '.pocket-build', 'd13x', component)
+        Env.VariantDir(obj, src, duplicate=0)
+        group += DefineGroup(component, Glob(os.path.join(obj, '*.c')),
+            depend=['LPKG_USING_POCKETJS_GUEST'], CPPPATH=includes, LOCAL_CCFLAGS=' -std=gnu11')
+
 Return('group')

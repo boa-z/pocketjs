@@ -57,4 +57,4 @@ not copied. The substitutions are:
 
 | Port | SoC | CPU | ABI | Status |
 |------|-----|-----|-----|--------|
-| [artinchip-d13x](ports/artinchip-d13x/README.md) | D133ECS | Xuantie E907FDP | RV32IMAFDC / ILP32D | Gate 0 |
+| [artinchip-d13x](ports/artinchip-d13x/README.md) | D133ECS | Xuantie E907FDP | RV32IMAFDC / ILP32D | Gate 2 board accepted; Gate 3 guest/UI under validation |

@@ -83,3 +83,11 @@ config LPKG_USING_POCKETJS_RENDER_RGB565
     bool "PocketJS RGB565 software renderer"
     depends on LPKG_USING_POCKETJS_UI_CORE
     default n
+
+config LPKG_USING_POCKETJS_GUEST
+    bool "PocketJS QuickJS-ng guest and retained UI binding"
+    depends on LPKG_USING_POCKETJS_UI_CORE
+    default n
+    help
+      PSRAM-only JavaScript allocator, bounded synchronous turns and Promise
+      jobs. No POSIX libc helpers, worker threads, eval-file or module loader.

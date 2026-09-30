@@ -109,6 +109,9 @@ export function generatedIdfContracts(): Map<string, string> {
     ["hosts/esp-idf/components/pocketjs_ui_core/include/pocketjs/native_ui.h", cFunctions("ui-core", "ui_core")],
     ["hosts/esp-idf/components/pocketjs_render_rgb565/include/pocketjs/native_renderer.h", cFunctions("render-rgb565", "render_rgb565")],
     // RT-Thread shares the generated UI and renderer contract.
+    ["hosts/rt-thread/components/pocketjs_ui_qjs/include/pocketjs/pak_format.h",
+      "/* Generated from contracts/spec/spec.ts. Do not edit. */\n#pragma once\n" +
+      Object.entries({ PAK_MAGIC, PAK_VERSION, PAK_HEADER_SIZE, PAK_ENTRY_SIZE }).map(([key, value]) => `#define ${key} ${value}U\n`).join("")],
     ["hosts/rt-thread/native/abi/src/lib.rs", rustTypes()],
     ["hosts/rt-thread/components/pocketjs_render_rgb565/include/pocketjs/render_types.h", cTypes("renderer")],
     ["hosts/rt-thread/components/pocketjs_render_rgb565/include/pocketjs/native_renderer.h", cFunctions("render-rgb565", "render_rgb565", "hosts/rt-thread")],
@@ -149,7 +152,7 @@ if (invokedDirectly) {
   for (const [path, contents] of generatedIdfContracts()) {
     const file = resolve(root, path);
     if (check) {
-      if (!existsSync(file) || readFileSync(file, "utf8") !== contents) throw new Error(`stale generated contract: ${path}`);
+      if (!existsSync(file) || readFileSync(file, "utf8").replace(/\r\n/g, "\n") !== contents) throw new Error(`stale generated contract: ${path}`);
     } else {
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, contents);
