@@ -1,5 +1,5 @@
 /*
- * PocketJS ArtInChip D13x port - Gate 1A firmware entry point.
+ * PocketJS ArtInChip D13x port - Gate 1B/1C firmware entry point.
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -7,20 +7,24 @@
  * Source of truth: hosts/rt-thread/ports/artinchip-d13x/sdk/overlay/
  * Regenerate with: python tools/apply-sdk.py
  *
- * Still deliberately tiny. Gate 1A is Retained UI Core work, and it stops at the
- * allocator: no UI Core, no QuickJS, no framebuffer, no GE. `main` announces what
- * is running and then hands off to the probes in application/rt-thread/pocketjs-smoke/third_party/pocketjs.
+ * Still deliberately tiny. Gate 1B/1C is Retained UI Core work, and it stops at
+ * the UI core: no QuickJS, no framebuffer, no GE. `main` announces what is
+ * running and then hands off to the probes, which live with the components they
+ * exercise rather than here.
  *
- * Two probes run once automatically, in this order, so the evidence reaches the
+ * The probes run once automatically, in this order, so the evidence reaches the
  * console without an operator at the MSH prompt - on bring-up hardware there is
  * often no interactive terminal:
  *
- *   pjs_abi       Gate 0 regression. Now allocates through the new PSRAM_SW
- *                 backend, so it is a real check that Gate 1A did not break
- *                 what Gate 0 validated.
+ *   pjs_abi       Gate 0 regression. Allocates through the PSRAM_SW backend, so
+ *                 it is a real check that later gates did not break what Gate 0
+ *                 validated.
  *   pjs_mem_test  Gate 1A. Alignment, Box/Vec/String, region, leak.
+ *   pjs_ui        Gate 1B/1C. Instance lifecycle, tree, draw, and the frame
+ *                 borrow contract.
+ *   pjs_ui_stress Gate 1C. The same cycle repeatedly, asserting no leak.
  *
- * Both re-runnable on demand, and `pjs_mem` reports the heap map at any time.
+ * All re-runnable on demand, and `pjs_mem` reports the heap map at any time.
  */
 
 #include <rtthread.h>
@@ -57,7 +61,7 @@
 extern uint32_t aic_get_ram_size(void);
 
 #if defined(LPKG_USING_POCKETJS)
-/* Implemented in application/rt-thread/pocketjs-smoke/third_party/pocketjs/src/. */
+/* Implemented in packages/third-party/pocketjs/src/. */
 extern int pjs_abi_run(void);
 extern int pjs_mem_report(void);
 extern int pjs_mem_test(uint32_t iters);
@@ -67,6 +71,18 @@ extern int pjs_mem_test(uint32_t iters);
 #define PJS_AUTORUN_STRESS_ROUNDS 1000u
 #endif
 
+#if defined(LPKG_USING_POCKETJS_UI_CORE)
+/* Implemented in packages/third-party/pocketjs_ui_core/src/. */
+extern int pjs_ui_selftest(uint32_t width, uint32_t height);
+extern int pjs_ui_stress(uint32_t iters);
+
+/* Rounds for the automatic Gate 1C cycle. Deliberately smaller than the memory
+ * test's: each round builds and tears down a whole core instance, so 100 rounds
+ * is already hundreds of allocations and the leak assertion is about the trend,
+ * not the volume. `pjs_ui_stress <n>` overrides it at the prompt. */
+#define PJS_AUTORUN_UI_STRESS_ROUNDS 100u
+#endif
+
 int main(void)
 {
 #ifdef ULOG_USING_FILTER
@@ -74,7 +90,7 @@ int main(void)
 #endif
 
     rt_kprintf("\n");
-    rt_kprintf("PocketJS D13x port - Gate 1A firmware (Retained UI Core: allocator)\n");
+    rt_kprintf("PocketJS D13x port - Gate 1B/1C firmware (Retained UI Core)\n");
     rt_kprintf("  board    : d50t-2-lite (D133ECS, Xuantie E907FDP)\n");
     rt_kprintf("  abi      : RV32IMAFDC / ILP32D hard-float\n");
     rt_kprintf("  rev      : %s\n", PJS_BUILD_REV);
@@ -97,18 +113,30 @@ int main(void)
                (unsigned)(AIC_PSRAM_SIZE / 1024u / 1024u));
 
 #if defined(LPKG_USING_POCKETJS)
-    rt_kprintf("  runtime  : application/rt-thread/pocketjs-smoke/third_party/pocketjs\n");
+    rt_kprintf("  runtime  : packages/third-party/pocketjs\n");
+  #if defined(LPKG_USING_POCKETJS_UI_CORE)
+    rt_kprintf("  ui core  : packages/third-party/pocketjs_ui_core\n");
+    rt_kprintf("  commands : pjs_abi, pjs_mem, pjs_mem_test [rounds], pjs_abi_panic,\n");
+    rt_kprintf("             pjs_ui [w] [h], pjs_ui_stress [rounds]\n");
+  #else
     rt_kprintf("  commands : pjs_abi, pjs_mem, pjs_mem_test [rounds], pjs_abi_panic\n");
+  #endif
 
   #if defined(LPKG_POCKETJS_AUTORUN)
     /* Gate 0 first: if the backend swap broke the ABI probe, that is the more
      * informative failure and it should be the one at the top of the log.
      *
-     * Neither probe is fatal on FAIL. A failing gate must leave the board alive
-     * and reachable so the log can be read and the command re-run, rather than
-     * turning a failed gate into a boot loop. */
+     * None of the probes is fatal on FAIL. A failing gate must leave the board
+     * alive and reachable so the log can be read and the command re-run, rather
+     * than turning a failed gate into a boot loop. */
     pjs_abi_run();
     pjs_mem_test(PJS_AUTORUN_STRESS_ROUNDS);
+   #if defined(LPKG_POCKETJS_UI_CORE_AUTORUN)
+    /* Gate 1B/1C last, so the UI core's own numbers are not buried under the
+     * memory test's 1000-round summary. */
+    pjs_ui_selftest(0u, 0u);
+    pjs_ui_stress(PJS_AUTORUN_UI_STRESS_ROUNDS);
+   #endif
   #else
     rt_kprintf("  probes   : autorun disabled; type `pjs_abi` then `pjs_mem_test`\n");
   #endif

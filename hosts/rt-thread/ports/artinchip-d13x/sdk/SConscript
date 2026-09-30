@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+# Included by the consuming application; no global SDK package hooks.
+from building import *
+import os
+import SCons.Errors
+
+cwd = GetCurrentDir()
+port = os.path.dirname(cwd)
+host = os.path.dirname(os.path.dirname(port))
+repo = os.path.dirname(os.path.dirname(host))
+ui = os.path.join(host, 'components', 'pocketjs_ui_core')
+libdir = os.path.join(repo, '.pocket-build', 'd13x', 'rust-target',
+                      'd13x-e907-ilp32d', 'release')
+group = []
+runtime_obj = os.path.join(repo, '.pocket-build', 'd13x', 'c-host')
+ui_obj = os.path.join(repo, '.pocket-build', 'd13x', 'c-ui')
+Env.VariantDir(runtime_obj, os.path.join(port, 'src'), duplicate=0)
+Env.VariantDir(ui_obj, os.path.join(ui, 'src'), duplicate=0)
+
+def archive(stem):
+    path = os.path.join(libdir, 'lib' + stem + '.a')
+    if not os.path.isfile(path):
+        raise SCons.Errors.UserError(
+            'PocketJS Rust archive missing: ' + path + '\n'
+            'Run python application/rt-thread/pocketjs-smoke/build.py first.')
+    # File inputs remain tracked dependencies and avoid the SDK LIBS
+    # whole-archive wrapper, which duplicates Rust runtime lang items.
+    return File(path)
+
+if GetDepend('LPKG_USING_POCKETJS'):
+    group += DefineGroup('pocketjs', Glob(os.path.join(runtime_obj, '*.c')),
+                         depend=['LPKG_USING_POCKETJS'],
+                         CPPPATH=[os.path.join(port, 'include'), os.path.join(port, 'src')])
+    group += [archive('pocketjs_abi_probe')]
+
+if GetDepend('LPKG_USING_POCKETJS_UI_CORE'):
+    sources = Glob(os.path.join(ui_obj, '*.c'))
+    if not GetDepend('LPKG_POCKETJS_UI_CORE_DEMO'):
+        sources = [s for s in sources if not str(s).endswith('pocketjs_ui_core_demo.c')]
+    group += DefineGroup('pocketjs_ui_core', sources,
+                         depend=['LPKG_USING_POCKETJS_UI_CORE'],
+                         CPPPATH=[os.path.join(ui, 'include'),
+                                  os.path.join(port, 'include'), os.path.join(port, 'src')])
+    group += [archive('pocketjs_rtthread_ui_core')]
+
+Return('group')

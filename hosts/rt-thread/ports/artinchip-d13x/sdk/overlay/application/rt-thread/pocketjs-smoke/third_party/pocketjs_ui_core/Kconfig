@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# GENERATED FILE - do not edit inside the SDK tree.
+# Source of truth: hosts/rt-thread/ports/artinchip-d13x/sdk/overlay/
+# Regenerate with: python tools/apply-sdk.py
+#
+# PocketJS retained UI core on ArtInChip D13x / Luban-Lite.
+#
+# Gate 1 scope: the node tree, style, taffy layout, text, animation and
+# draw-list emission that a host drives through pocketjs_ui_core_*. No QuickJS,
+# no framebuffer, no GE - those are later gates.
+
+menuconfig LPKG_USING_POCKETJS_UI_CORE
+    bool "PocketJS retained UI core"
+    default n
+    depends on LPKG_USING_POCKETJS
+    help
+      Builds the retained UI core for the ArtInChip D13x.
+
+      The Rust half is delivered as a prebuilt staticlib,
+      libpocketjs_rtthread_ui_core.a, which is deliberately NOT committed.
+      Produce it from the PocketJS repository before building:
+
+        python hosts/rt-thread/ports/artinchip-d13x/tools/build-firmware.py
+
+      If the archive is absent the SConscript fails with instructions rather
+      than silently linking a firmware without a UI core.
+
+      This component depends on the `pocketjs` package because that package
+      owns the host seam the UI core allocates through (pjs_host_alloc /
+      pjs_host_free) and logs through (pjs_host_log). Enabling this without
+      `pocketjs` would leave those undefined at link time.
+
+if LPKG_USING_POCKETJS_UI_CORE
+
+config LPKG_POCKETJS_UI_CORE_DEMO
+    bool "Expose the pjs_ui_core MSH command"
+    default y
+    help
+      Registers a command that drives the UI core from the prompt: create and
+      destroy an instance, build a small node tree, tick, draw, and prove the
+      frame borrow contract by showing that a stale view is rejected.
+
+      Turning this off builds the UI core without the self-test, which is what
+      a shipping configuration eventually wants.
+
+config LPKG_POCKETJS_UI_CORE_AUTORUN
+    bool "Run the UI core self-test once at boot"
+    default y
+    help
+      Makes the Gate 1 evidence appear on the console without an operator at
+      the prompt. Useful on bring-up hardware with no interactive terminal.
+
+endif

@@ -8,15 +8,19 @@ second copy that silently drifts.
 
 What it writes into the SDK:
 
-  application/rt-thread/pocketjs-smoke/third_party/pocketjs/       from sdk/overlay/, plus the vendored port
-                                       sources (ABI header, host glue, Rust
-                                       crate) so the package rebuilds in place
-  application/rt-thread/pocketjs-smoke/ the thin Gate 0 entry point
+  application/rt-thread/pocketjs-smoke/third_party/pocketjs/          from sdk/overlay/, plus the vendored
+                                          port sources (ABI header, host glue,
+                                          Rust crate) so the package rebuilds in
+                                          place
+  application/rt-thread/pocketjs-smoke/third_party/pocketjs_ui_core/  from sdk/overlay/, plus the vendored
+                                          thunk layer and generated headers
+  application/rt-thread/pocketjs-smoke/   the thin Gate 0 entry point
   target/configs/…_pocketjs-smoke_defconfig
   No global SDK Kconfig or package files are modified.
 
-It never touches the Rust archive: ``lib/`` receives only a ``.gitignore`` so a
-built ``.a`` can be dropped there without ever being committable.
+It never touches the Rust archives: each package's ``lib/`` receives only a
+``.gitignore`` so a built ``.a`` can be dropped there without ever being
+committable.
 
 Usage:
     python tools/apply-sdk.py              # apply
@@ -37,14 +41,28 @@ import portenv as env
 OVERLAY_DIR = env.PORT_ROOT / "sdk" / "overlay"
 
 PKG_REL = Path("application") / "rt-thread" / "pocketjs-smoke" / "third_party" / "pocketjs"
+UI_PKG_REL = Path("application") / "rt-thread" / "pocketjs-smoke" / "third_party" / "pocketjs_ui_core"
 APP_REL = Path("application") / "rt-thread" / "pocketjs-smoke"
+
+# Every package this overlay owns gets a lib/ drop-box for its Rust archive.
+LIB_PACKAGES = (PKG_REL, UI_PKG_REL)
 
 # Generated banner identity, written next to main.c so a plain quoted include
 # finds it without touching CPPPATH. See build_identity_header().
 BUILD_HEADER = APP_REL / "pocketjs_build.h"
 
-# Port sources vendored into the SDK package so it is self-contained: someone
-# with only the SDK branch can rebuild the Rust half without cloning PocketJS.
+# Port sources vendored into the SDK package. Someone with only the SDK branch
+# can see exactly which sources the staged archive was built from, and can
+# rebuild the C half in place.
+#
+# "Rebuild the Rust half in place" is no longer true, and the entries below do
+# not pretend otherwise. Both Rust crates depend on the host-level
+# `pocketjs-rtthread-runtime` - the single owner of `#[global_allocator]` and
+# `#[panic_handler]` in the image - which lives in the PocketJS tree at
+# `hosts/rt-thread/native/runtime` and has no counterpart here. The dependency
+# path in the vendored `Cargo.toml` therefore does not resolve where it lands.
+# The SDK links the archive `build-native.py` stages; these files are the
+# provenance record for it.
 VENDORED = {
     PKG_REL / "include" / "pocketjs_d13x.h": env.PORT_ROOT / "include" / "pocketjs_d13x.h",
     PKG_REL / "src" / "pocketjs_host.c": env.PORT_ROOT / "src" / "pocketjs_host.c",
@@ -62,6 +80,22 @@ VENDORED = {
         env.PORT_ROOT / "rust" / "abi-probe" / "Cargo.toml",
     PKG_REL / "rust" / "abi-probe" / "src" / "lib.rs":
         env.PORT_ROOT / "rust" / "abi-probe" / "src" / "lib.rs",
+    # Gate 1B: the retained UI core's host binding, from the RT-Thread host's
+    # own component tree rather than from this port. Only the C half is
+    # vendored. The crate behind it (hosts/rt-thread/native/ui-core) pulls in
+    # engine/core and its whole dependency graph, which is well past what
+    # "self-contained SDK package" can mean, so its archive is staged as a
+    # prebuilt exactly like the probe's.
+    UI_PKG_REL / "include" / "pocketjs" / "ui_core.h":
+        env.ui_core_component_dir() / "include" / "pocketjs" / "ui_core.h",
+    UI_PKG_REL / "include" / "pocketjs" / "native_ui.h":
+        env.ui_core_component_dir() / "include" / "pocketjs" / "native_ui.h",
+    UI_PKG_REL / "include" / "pocketjs" / "ui_types.h":
+        env.ui_core_component_dir() / "include" / "pocketjs" / "ui_types.h",
+    UI_PKG_REL / "src" / "ui_core.c":
+        env.ui_core_component_dir() / "src" / "ui_core.c",
+    UI_PKG_REL / "src" / "pocketjs_ui_core_demo.c":
+        env.ui_core_component_dir() / "src" / "pocketjs_ui_core_demo.c",
 }
 
 # Paths produced by earlier revisions of this overlay. Removed if present so a
@@ -166,6 +200,13 @@ def main() -> int:
                     help="apply even when the SDK is not on the port branch")
     args = ap.parse_args()
 
+    dependency = env.sdk_root() / PKG_REL
+    if (dependency / ".git").exists():
+        print("The SDK consumes PocketJS as a submodule; overlay copying is disabled.\n"
+              "Build with python application/rt-thread/pocketjs-smoke/build.py from the SDK.",
+              file=sys.stderr)
+        return 2
+
     sdk = env.sdk_root()
     branch = env.sdk_branch()
     want = env.port_branch()
@@ -191,18 +232,10 @@ def main() -> int:
     for rel, src in sorted(VENDORED.items()):
         actions.append((_sync_file(src, sdk / rel, args.check), _rel(rel)))
 
-    # 3. the lib drop-box guard
-    gi = sdk / PKG_REL / "lib" / ".gitignore"
-    if gi.is_file() and gi.read_text(encoding="utf-8") == LIB_GITIGNORE:
-        actions.append(("same", _rel(PKG_REL / "lib" / ".gitignore")))
-    elif args.check:
-        actions.append(("drift", _rel(PKG_REL / "lib" / ".gitignore")))
-    else:
-        existed = gi.is_file()
-        gi.parent.mkdir(parents=True, exist_ok=True)
-        gi.write_text(LIB_GITIGNORE, encoding="utf-8")
-        actions.append(("update" if existed else "create",
-                        _rel(PKG_REL / "lib" / ".gitignore")))
+    # 3. the lib drop-box guards
+    for pkg in LIB_PACKAGES:
+        rel = pkg / "lib" / ".gitignore"
+        actions.append((_sync_text(sdk / rel, LIB_GITIGNORE, args.check), _rel(rel)))
 
     # 4. the firmware banner's build identity (generated, not copied)
     actions.append((_sync_text(sdk / BUILD_HEADER, build_identity_header(), args.check),

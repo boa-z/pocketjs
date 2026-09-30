@@ -11,16 +11,33 @@ crate-type = ["rlib", "staticlib"]
 [dependencies]
 pocketjs-core = { path = "../../../../engine/core" }
 pocketjs-rtthread-abi = { path = "../abi" }
-pocketjs-rtthread-runtime = { path = "../runtime" }
+# `default-features = false` must match the probe's declaration of this same
+# dependency, exactly. Cargo emits `--cfg feature="default"` when a dependency's
+# default features are enabled and omits it when they are not, and those cfgs are
+# folded into `-Cmetadata`. Since the runtime's `default` feature is empty the
+# two settings are semantically identical, but the metadata is not - and a
+# metadata mismatch gives the two archives two differently named copies of the
+# runtime crate, which the linker cannot reconcile. `tools/check-abi.py` asserts
+# that every crate shared by both archives carries the same metadata.
+pocketjs-rtthread-runtime = { path = "../runtime", default-features = false }
 
 [features]
 default = ["std"]
 std = ["pocketjs-core/std", "pocketjs-rtthread-runtime/std"]
 
+# MUST match `hosts/rt-thread/ports/artinchip-d13x/rust/abi-probe/Cargo.toml`
+# key for key, so that crates shared by both archives - `core`, `alloc`,
+# `compiler_builtins` and `pocketjs-rtthread-runtime` - are built identically
+# and the linker can satisfy every reference from a single copy. Differing
+# profiles give the shared crates different `-Cmetadata`, which produces two
+# copies with different mangled names and a hard "multiple definition" error on
+# the compiler-owned `__rustc` shims. See the probe's manifest for the long
+# version; `tools/build-native.py` enforces the match.
 [profile.release]
 codegen-units = 16
 lto = false
 opt-level = 3
 panic = "abort"
+debug = true
 
 [workspace]

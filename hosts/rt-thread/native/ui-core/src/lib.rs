@@ -652,4 +652,42 @@ mod tests {
             pocketjs_native_ui_destroy(core);
         }
     }
+    #[test]
+    fn borrow_invalidation_and_instance_isolation() {
+        unsafe {
+            let config = NativeUiConfig {
+                struct_size: core::mem::size_of::<NativeUiConfig>(),
+                logical_width: 32, logical_height: 16, raster_density: 1, tick_hz: 60,
+            };
+            let (mut first, mut second) = (ptr::null_mut(), ptr::null_mut());
+            assert_eq!(pocketjs_native_ui_create(&config, &mut first), 0);
+            assert_eq!(pocketjs_native_ui_create(&config, &mut second), 0);
+            let mut frame: NativeFrameView = core::mem::zeroed();
+            frame.struct_size = core::mem::size_of::<NativeFrameView>();
+            assert_eq!(pocketjs_native_ui_frame_validate(ptr::null()), -1);
+            assert_eq!(pocketjs_native_ui_frame_validate(&frame), -1);
+            for _ in 0..100 {
+                assert_eq!(pocketjs_native_ui_draw(first, &mut frame), 0);
+                let before = frame;
+                pocketjs_native_ui_tick(second);
+                assert_eq!(pocketjs_native_ui_frame_validate(&before), 0);
+                let mut observed = config;
+                assert_eq!(pocketjs_native_ui_get_config(first, &mut observed), 0);
+                assert_eq!(pocketjs_native_ui_frame_validate(&before), 0);
+                pocketjs_native_ui_set_cursor_position(first, 64.0, 32.0);
+                assert_eq!(pocketjs_native_ui_frame_validate(&before), -1);
+                assert_eq!(pocketjs_native_ui_draw(first, &mut frame), 0);
+                assert_eq!(pocketjs_native_ui_frame_validate(&frame), 0);
+                let mut corrupt = frame;
+                corrupt.draw_word_count += 1;
+                assert_eq!(pocketjs_native_ui_frame_validate(&corrupt), -1);
+                pocketjs_native_ui_tick(first);
+                assert_eq!(pocketjs_native_ui_frame_validate(&frame), -1);
+            }
+            // Views must not be accessed after their owning core is destroyed.
+            pocketjs_native_ui_destroy(first);
+            pocketjs_native_ui_destroy(second);
+        }
+    }
+
 }

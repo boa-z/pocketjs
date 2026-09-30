@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: Apache-2.0
+# Application-owned D13x dependency options.
+
+menuconfig LPKG_USING_POCKETJS
+    bool "PocketJS (JavaScript runtime for ArtInChip D13x)"
+    default n
+    help
+      Builds the PocketJS runtime for the ArtInChip D13x (Xuantie E907FDP,
+      RV32IMAFDC / ILP32D hard-float).
+
+      The Rust half is delivered as a prebuilt staticlib,
+      libpocketjs_abi_probe.a, which is deliberately NOT committed. Produce it
+      from the PocketJS repository before building:
+
+        python hosts/rt-thread/ports/artinchip-d13x/tools/build-firmware.py
+
+      If the archive is absent the SConscript fails with instructions rather
+      than silently linking a firmware without a runtime.
+
+if LPKG_USING_POCKETJS
+
+config LPKG_POCKETJS_ABI_PROBE
+    bool "Expose the pjs_abi / pjs_abi_panic MSH commands"
+    default y
+    help
+      Registers the Gate 0 conformance probe at the MSH prompt. Turning this
+      off builds the runtime without the probe, which is what a shipping
+      configuration eventually wants.
+
+config LPKG_POCKETJS_AUTORUN
+    bool "Run the ABI probe once at boot"
+    default y
+    help
+      Makes the Gate 0 evidence appear on the console without an operator at
+      the prompt. Useful on bring-up hardware with no interactive terminal.
+
+endif
+
+menuconfig LPKG_USING_POCKETJS_UI_CORE
+    bool "PocketJS retained UI core"
+    default n
+    depends on LPKG_USING_POCKETJS
+    help
+      Builds the retained UI core for the ArtInChip D13x.
+
+      The Rust half is delivered as a prebuilt staticlib,
+      libpocketjs_rtthread_ui_core.a, which is deliberately NOT committed.
+      Produce it from the PocketJS repository before building:
+
+        python hosts/rt-thread/ports/artinchip-d13x/tools/build-firmware.py
+
+      If the archive is absent the SConscript fails with instructions rather
+      than silently linking a firmware without a UI core.
+
+      This component depends on the `pocketjs` package because that package
+      owns the host seam the UI core allocates through (pjs_host_alloc /
+      pjs_host_free) and logs through (pjs_host_log). Enabling this without
+      `pocketjs` would leave those undefined at link time.
+
+if LPKG_USING_POCKETJS_UI_CORE
+
+config LPKG_POCKETJS_UI_CORE_DEMO
+    bool "Expose the pjs_ui_core MSH command"
+    default y
+    help
+      Registers a command that drives the UI core from the prompt: create and
+      destroy an instance, build a small node tree, tick, draw, and prove the
+      frame borrow contract by showing that a stale view is rejected.
+
+      Turning this off builds the UI core without the self-test, which is what
+      a shipping configuration eventually wants.
+
+config LPKG_POCKETJS_UI_CORE_AUTORUN
+    bool "Run the UI core self-test once at boot"
+    default y
+    help
+      Makes the Gate 1 evidence appear on the console without an operator at
+      the prompt. Useful on bring-up hardware with no interactive terminal.
+
+endif

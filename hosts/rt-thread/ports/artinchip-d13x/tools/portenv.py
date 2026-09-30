@@ -35,6 +35,59 @@ def abi_probe_dir() -> Path:
     return rust_dir() / "abi-probe"
 
 
+def rtthread_native_dir() -> Path:
+    """``hosts/rt-thread/native`` - the host-level Rust crates.
+
+    Unlike ``rust/abi-probe`` these are not port-local. They belong to the
+    RT-Thread host and are shared by every RT-Thread port; the D13x port
+    consumes them and stages the archive they produce, but does not own their
+    sources. That is why they are located from ``repo_root()`` rather than from
+    ``PORT_ROOT``.
+    """
+    return repo_root() / "hosts" / "rt-thread" / "native"
+
+
+def ui_core_dir() -> Path:
+    """The retained UI core crate (host-level, shared across RT-Thread ports)."""
+    return rtthread_native_dir() / "ui-core"
+
+
+def ui_core_component_dir() -> Path:
+    """The RT-Thread component that exposes the UI core to a host.
+
+    Holds the hand-written thunk layer plus the generated headers. The SDK
+    package is vendored from here, so this is the source of truth for it.
+    """
+    return repo_root() / "hosts" / "rt-thread" / "components" / "pocketjs_ui_core"
+
+
+def toolchain_channel() -> str:
+    """The pinned Rust channel from ``rust/rust-toolchain.toml``.
+
+    Returned as a bare channel name so it can be handed to cargo through
+    ``RUSTUP_TOOLCHAIN``. The port pins the compiler exactly once, in the file
+    rustup reads when cargo runs from ``rust/``; the host-level crates live
+    outside that tree, so this is how they get the same compiler without a
+    second pin that could drift away from it.
+
+    Empty string when the file or the key is missing, which leaves cargo to use
+    whatever rustup would otherwise pick.
+    """
+    path = rust_dir() / "rust-toolchain.toml"
+    if not path.is_file():
+        return ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line.startswith("channel"):
+            continue
+        _, _, value = line.partition("=")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            return value[1:-1]
+        return value
+    return ""
+
+
 def build_root() -> Path:
     """Ignored build/validation root. Never committed (see .gitignore)."""
     return repo_root() / ".pocket-build" / "d13x"
@@ -61,6 +114,12 @@ def sdk_root() -> Path:
     env = os.environ.get("POCKETJS_AIC_SDK_ROOT")
     if env:
         return Path(env).expanduser().resolve()
+
+    # A source dependency belongs to the containing SDK worktree. Prefer
+    # that relationship over a machine-specific path in versions.toml.
+    for parent in repo_root().parents:
+        if (parent / "SConstruct").is_file() and (parent / "bsp/artinchip").is_dir():
+            return parent.resolve()
 
     pinned = _toml_str("luban_lite", "local_path")
     if pinned:
@@ -135,21 +194,13 @@ def sdk_branch() -> str:
 
 
 def sdk_dirty_entries() -> list[str]:
-    """Tracked modifications in the SDK tree, excluding submodule churn.
+    """Report SDK source/index changes without suppressing ordinary edits.
 
-    Submodule pointer noise (`` m <path>`` / `` M <path>``) is filtered out
-    because the product SDK legitimately carries submodules that the port never
-    touches; only real source edits should be able to fail the gate.
+    Git handles dependency worktree dirtiness; gitlink changes remain visible.
+    Do not strip leading spaces from porcelain status columns.
     """
-    raw = _git(sdk_root(), "status", "--porcelain").strip()
-    if not raw:
-        return []
-    entries = []
-    for line in raw.splitlines():
-        if len(line) > 2 and line[1] == "M" and line[2] == " ":
-            continue  # submodule worktree change
-        entries.append(line)
-    return entries
+    raw = _git(sdk_root(), "status", "--porcelain=v1", "--ignore-submodules=dirty")
+    return [line for line in raw.splitlines() if line]
 
 
 def sdk_is_dirty() -> bool:
@@ -340,3 +391,9 @@ def fail(msg: str) -> None:
 
 def ok(msg: str) -> None:
     print(f"ok:   {msg}", file=sys.stderr)
+
+
+def sdk_submodule_mode() -> bool:
+    """Whether this repository is the SDK application's source dependency."""
+    expected = sdk_root() / "application/rt-thread/pocketjs-smoke/third_party/pocketjs"
+    return repo_root().resolve() == expected.resolve()

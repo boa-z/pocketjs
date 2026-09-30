@@ -13,12 +13,53 @@ publish = false
 name = "pocketjs_abi_probe"
 crate-type = ["staticlib"]
 
+[dependencies]
+# The probe does NOT declare its own `#[global_allocator]` / `#[panic_handler]`.
+# It consumes the host's single Rust runtime, exactly as `pocketjs-rtthread-ui-core`
+# does. Two crates in one image declaring those lang items is a hard link error -
+# the shims rustc generates for them have fixed symbol names that `-Cmetadata`
+# cannot rename. See the runtime crate's module docs.
+#
+# Five levels up is `hosts/`, so this reaches `hosts/rt-thread/native/runtime`.
+# That is outside the port on purpose: the runtime is a host-level crate shared
+# by every RT-Thread port, not something this port owns.
+#
+# Consequence worth knowing: the probe is no longer a self-contained crate, so
+# the copy of this file that `apply-sdk.py` vendors into the SDK cannot be built
+# where it lands. That subtree is reference material; the SDK links the archive
+# `build-native.py` stages, exactly as it does for the UI core.
+#
+# `default-features = false` must match the UI core's declaration of this same
+# dependency, exactly. Cargo emits `--cfg feature="default"` when a dependency's
+# default features are enabled and omits it when they are not, and those cfgs are
+# folded into `-Cmetadata`. The runtime's `default` feature is empty, so the two
+# settings are semantically identical - but the metadata is not, and a metadata
+# mismatch gives the two archives two differently named copies of the runtime
+# crate. `tools/check-abi.py` asserts every shared crate carries the same
+# metadata, which is the check that catches this.
+pocketjs-rtthread-runtime = { path = "../../../../../rt-thread/native/runtime", default-features = false }
+
 [features]
 default = []
 
-# Keep debug info: Gate 0 static verification runs readelf/objdump/nm over the
-# archive and needs readable symbol and line information.
+# MUST match `hosts/rt-thread/native/ui-core/Cargo.toml` key for key.
+#
+# This is a link requirement, not a style choice. Cargo folds the release
+# profile into the metadata hash it turns into `-Cmetadata`, so two archives
+# built with different profiles contain two *differently named* copies of every
+# shared dependency (`core`, `alloc`, `compiler_builtins`, the runtime crate).
+# The linker then cannot satisfy the second archive's references from the first
+# copy, extracts both, and the compiler-owned `__rustc` allocator/panic shims -
+# whose names are fixed and therefore identical in both copies - collide with
+# "multiple definition". Aligning the profiles makes the shared crates
+# byte-identical, so one extraction satisfies everything and the second copy is
+# never pulled. `tools/build-native.py` enforces this and fails loudly on drift.
+#
+# `debug = true` is kept on both sides for symbolisation; debug sections are not
+# loaded, so this costs nothing in flash.
 [profile.release]
+codegen-units = 16
+lto = false
+opt-level = 3
 panic = "abort"
-opt-level = "s"
 debug = true

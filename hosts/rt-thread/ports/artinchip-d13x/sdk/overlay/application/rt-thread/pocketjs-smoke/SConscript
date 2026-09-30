@@ -23,5 +23,6 @@ group = DefineGroup(
 )
 
 group += SConscript('third_party/pocketjs/SConscript')
+group += SConscript('third_party/pocketjs_ui_core/SConscript')
 
 Return('group')

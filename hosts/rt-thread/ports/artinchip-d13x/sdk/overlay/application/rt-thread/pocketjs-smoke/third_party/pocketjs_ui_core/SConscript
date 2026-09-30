@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# GENERATED FILE - do not edit inside the SDK tree.
+# Source of truth: hosts/rt-thread/ports/artinchip-d13x/sdk/overlay/
+# Regenerate with: python tools/apply-sdk.py
+#
+# PocketJS retained UI core build.
+#
+# Layout:
+#   include/pocketjs/ui_core.h    hand-written RT-Thread surface (rt_err_t)
+#   include/pocketjs/native_ui.h  generated raw entry points
+#   include/pocketjs/ui_types.h   generated ABI types
+#   src/ui_core.c                 thunk layer: argument checking + error mapping
+#   lib/                          drop-box for libpocketjs_rtthread_ui_core.a
+#
+# Deliberately a separate package from `pocketjs`. That package is the runtime
+# seam - the allocator, the host services and the Gate 0 probe - and has to
+# link on its own. This one is the retained UI core, which is a much larger
+# Rust archive built from a crate that depends on the whole engine. Keeping them
+# apart lets a product ship the runtime without the UI core, and it mirrors the
+# ESP-IDF host, where components/pocketjs_ui_core is a component in its own
+# right rather than a corner of the runtime component.
+#
+# The archive is appended via DefineGroup(LIBS=..., LIBPATH=...) rather than
+# listed as a source, because the two halves call each other in both directions
+# (C calls pocketjs_native_ui_*, Rust calls pjs_host_*). Putting the archive at
+# the end of the link line is what lets the linker resolve that cycle without a
+# --start-group wrapper.
+
+from building import *
+import os
+import SCons.Errors
+
+cwd = GetCurrentDir()
+
+LIB_NAME = 'pocketjs_rtthread_ui_core'
+LIB_DIR = os.path.join(cwd, 'lib')
+LIB_FILE = os.path.join(LIB_DIR, 'lib' + LIB_NAME + '.a')
+
+# The host seam the self-test reads its allocator counters from lives in the
+# `pocketjs` package (pjs_host_alloc_stats in src/, pjs_host_log in include/).
+# Those directories also reach CPPPATH globally through that package's own
+# DefineGroup, but naming them here keeps the dependency visible in the build
+# file instead of implicit - and it is what makes the `depends on
+# LPKG_USING_POCKETJS` in Kconfig load-bearing rather than decorative.
+HOST_PKG = os.path.normpath(os.path.join(cwd, '..', 'pocketjs'))
+HOST_INCLUDE = [
+    os.path.join(HOST_PKG, 'include'),
+    os.path.join(HOST_PKG, 'src'),
+]
+
+if GetDepend('LPKG_USING_POCKETJS_UI_CORE'):
+    if not os.path.isfile(LIB_FILE):
+        raise SCons.Errors.UserError(
+            '\n'
+            'PocketJS UI core: the Rust staticlib is missing.\n'
+            '  expected: ' + LIB_FILE + '\n'
+            '\n'
+            'The archive is a build artifact and must never be committed, so a\n'
+            'clean checkout does not have it. Produce it, then rebuild:\n'
+            '\n'
+            '  python hosts/rt-thread/ports/artinchip-d13x/tools/build-firmware.py\n'
+            '\n'
+            'That script builds both crates, stages the .a files here and in the\n'
+            'pocketjs package, applies the defconfig and runs the SCons build.\n'
+        )
+
+src = Glob('src/*.c')
+
+# The self-test is the one optional source: it registers MSH commands and is
+# what a shipping configuration eventually drops.
+if not GetDepend('LPKG_POCKETJS_UI_CORE_DEMO'):
+    src = [f for f in src if not str(f).endswith('pocketjs_ui_core_demo.c')]
+
+group = DefineGroup(
+    'pocketjs_ui_core',
+    src,
+    depend=['LPKG_USING_POCKETJS_UI_CORE'],
+    CPPPATH=[os.path.join(cwd, 'include')] + HOST_INCLUDE,
+)
+
+# Explicit link inputs avoid the SDK's whole-archive wrapper for LIBS.
+# The archive stays a tracked SCons dependency and is lazily extracted.
+if GetDepend('LPKG_USING_POCKETJS_UI_CORE'):
+    group += [File(LIB_FILE)]
+
+Return('group')

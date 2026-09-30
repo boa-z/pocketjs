@@ -225,9 +225,17 @@ def main() -> int:
     # objcopy handles archives: it applies the section removal to every member.
     # Note it *adds* members when rewriting an archive, so the output can grow;
     # that is harmless (duplicate members are never pulled in by the linker).
-    proc = _run([pe.tool("objcopy"), "-R", ATTR_SECTION, src, dst])
-    if proc.returncode != 0:
-        raise SystemExit(f"objcopy failed:\n{proc.stderr}")
+    # Binutils 2.35 extracts archive members beside its output. Nested
+    # application submodules exceed its Windows MAX_PATH limit, so rewrite
+    # in a short temporary directory and publish only a successful result.
+    with tempfile.TemporaryDirectory(prefix="pjs-attrs-") as tmp:
+        work = Path(tmp)
+        shutil.copyfile(src, work / "input.a")
+        proc = _run([pe.tool("objcopy"), "-R", ATTR_SECTION, "input.a", "output.a"], cwd=work)
+        if proc.returncode != 0:
+            raise SystemExit(f"objcopy failed:\n{proc.stderr}")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(work / "output.a", dst)
 
     after_members = _members(dst)
     after = _arch_strings(dst, after_members)

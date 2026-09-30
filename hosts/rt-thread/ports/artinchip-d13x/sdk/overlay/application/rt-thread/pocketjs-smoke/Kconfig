@@ -24,3 +24,4 @@ config AIC_POCKETJS_SMOKE_APP
       hosts/rt-thread/ports/artinchip-d13x/tools/build-firmware.py.
 
 source "application/rt-thread/pocketjs-smoke/third_party/pocketjs/Kconfig"
+source "application/rt-thread/pocketjs-smoke/third_party/pocketjs_ui_core/Kconfig"

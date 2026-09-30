@@ -9,20 +9,27 @@
 //! failure must be attributable to the toolchain bridge, not to PocketJS UI
 //! code.
 //!
+//! It does depend on `pocketjs-rtthread-runtime`, which owns the image's single
+//! Rust allocator and panic handler. That is a link-time requirement, not a
+//! layering preference: two crates in one image declaring those lang items is a
+//! hard "multiple definition" error, because the shims rustc generates for them
+//! have fixed symbol names that `-Cmetadata` cannot rename. See that crate's
+//! module docs. The probe consumes the runtime exactly as the UI core does, and
+//! reads the allocator counters back out through
+//! `pocketjs_rtthread_runtime::alloc_stats()`.
+//!
 //! The C side of this contract lives in `include/pocketjs_d13x.h`.
 
 #![no_std]
 
 extern crate alloc;
+extern crate pocketjs_rtthread_runtime;
 
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::alloc::{GlobalAlloc, Layout};
+use core::alloc::Layout;
 use core::ffi::{c_char, c_void};
-use core::panic::PanicInfo;
-use core::ptr;
-use core::sync::atomic::{AtomicU32, Ordering};
 
 // ---------------------------------------------------------------------------
 // Shared value types. Mirrored by `pjs_abi_*` in include/pocketjs_d13x.h.
@@ -134,99 +141,32 @@ unsafe extern "C" {
     fn pjs_host_value(v: AbiValue) -> AbiValue;
     fn pjs_host_nested(v: AbiNested) -> AbiNested;
     fn pjs_host_mixed(a: u32, b: f32, c: f64, p: *const u32, n: u32) -> f64;
-    fn pjs_host_alloc(size: u32, align: u32) -> *mut u8;
-    fn pjs_host_free(p: *mut u8, align: u32);
-    fn pjs_host_abort() -> !;
+    // `pjs_host_alloc` / `pjs_host_free` / `pjs_host_abort` are NOT declared
+    // here. They are the runtime crate's business: it owns the allocator that
+    // calls the first two and the panic handler that calls the third. Declaring
+    // them here as well would only mean two crates claiming the same seam.
 }
 
 // ---------------------------------------------------------------------------
-// Allocator
+// Allocator - owned by the host runtime, not by this crate
 // ---------------------------------------------------------------------------
 
-/// Alignment is *not* assumed here. The layout's own requirement is handed to
-/// the host, which is responsible for honouring it - including over-allocating
-/// when the heap cannot. An earlier revision hardcoded "the host gives 8 bytes"
-/// and aborted the probe on the first `Box<u32>` on real silicon, because this
-/// board's RT-Thread heap only guarantees RT_ALIGN_SIZE == 4.
-static LIVE_BYTES: AtomicU32 = AtomicU32::new(0);
-static PEAK_BYTES: AtomicU32 = AtomicU32::new(0);
-static ALLOC_COUNT: AtomicU32 = AtomicU32::new(0);
-static FREE_COUNT: AtomicU32 = AtomicU32::new(0);
-static FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
-
-/// Bytes requested from the host for `layout`. Deterministic, so `dealloc` can
-/// recompute it without extra bookkeeping. This is the *caller's* size: the
-/// host's own header and padding are its business, not the guest's.
-fn request_size(layout: &Layout) -> usize {
-    if layout.size() == 0 {
-        1
-    } else {
-        layout.size()
-    }
-}
-
-struct HostAllocator;
-
-unsafe impl GlobalAlloc for HostAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let size = request_size(&layout);
-
-        // Cannot overflow for realistic layouts, but keep the guard explicit:
-        // a bogus Layout must fail, not wrap.
-        if size > (u32::MAX as usize) {
-            FAIL_COUNT.fetch_add(1, Ordering::Relaxed);
-            return ptr::null_mut();
-        }
-
-        let raw = unsafe { pjs_host_alloc(size as u32, layout.align() as u32) };
-        if raw.is_null() {
-            FAIL_COUNT.fetch_add(1, Ordering::Relaxed);
-            return ptr::null_mut();
-        }
-
-        ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-        let live = LIVE_BYTES.fetch_add(size as u32, Ordering::Relaxed) + size as u32;
-        // Single-threaded owner by contract (see the RT-Thread thread model),
-        // so a plain compare-and-store keeps the peak accurate enough for
-        // telemetry.
-        let mut peak = PEAK_BYTES.load(Ordering::Relaxed);
-        while live > peak {
-            match PEAK_BYTES.compare_exchange_weak(
-                peak,
-                live,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(observed) => peak = observed,
-            }
-        }
-
-        raw
-    }
-
-    unsafe fn dealloc(&self, p: *mut u8, layout: Layout) {
-        if p.is_null() {
-            return;
-        }
-        // GlobalAlloc guarantees `dealloc` sees the allocating layout, so the
-        // same alignment goes back and the host knows whether it used a header.
-        unsafe { pjs_host_free(p, layout.align() as u32) };
-
-        FREE_COUNT.fetch_add(1, Ordering::Relaxed);
-        LIVE_BYTES.fetch_sub(request_size(&layout) as u32, Ordering::Relaxed);
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: HostAllocator = HostAllocator;
-
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    // panic = abort: there is no unwinder on this target, so a panic must
-    // stop the firmware rather than try to recover.
-    unsafe { pjs_host_abort() }
-}
+// This crate deliberately has no `#[global_allocator]` and no
+// `#[panic_handler]`. Both live in `pocketjs-rtthread-runtime`, the only crate
+// in the image allowed to declare them; this crate depends on it and inherits
+// both. See the module docs at the top of this file for why that is a hard
+// link-time requirement rather than a style choice.
+//
+// Alignment is still *not* assumed anywhere. The runtime hands `layout.align()`
+// straight to `pjs_host_alloc`, which over-allocates when the heap cannot
+// satisfy the request. An earlier revision hardcoded "the host gives 8 bytes"
+// and aborted the probe on the first `Box<u32>` on real silicon, because this
+// board's RT-Thread heap only guarantees RT_ALIGN_SIZE == 4.
+//
+// The allocation counters the Gate 0 report quotes now live with the allocator
+// they measure, in `pocketjs_rtthread_runtime::alloc_stats()`. They are
+// image-wide, so a probe-only firmware reports exactly the probe's traffic -
+// the same numbers Gate 0 recorded.
 
 // ---------------------------------------------------------------------------
 // Direction 1: C -> Rust
@@ -384,8 +324,9 @@ pub extern "C" fn pjs_probe_alloc(out: *mut AbiAllocReport) {
         }
     }
 
-    r.live_bytes = LIVE_BYTES.load(Ordering::Relaxed);
-    r.peak_bytes = PEAK_BYTES.load(Ordering::Relaxed);
+    let stats = pocketjs_rtthread_runtime::alloc_stats();
+    r.live_bytes = stats.live_bytes;
+    r.peak_bytes = stats.peak_bytes;
     unsafe { out.write(r) };
 }
 
@@ -469,11 +410,12 @@ pub extern "C" fn pjs_probe_alloc_stress(iters: u32, out: *mut AbiStressReport) 
         i += 1;
     }
 
-    r.live_bytes = LIVE_BYTES.load(Ordering::Relaxed);
-    r.peak_bytes = PEAK_BYTES.load(Ordering::Relaxed);
-    r.alloc_count = ALLOC_COUNT.load(Ordering::Relaxed);
-    r.free_count = FREE_COUNT.load(Ordering::Relaxed);
-    r.fail_count = FAIL_COUNT.load(Ordering::Relaxed);
+    let stats = pocketjs_rtthread_runtime::alloc_stats();
+    r.live_bytes = stats.live_bytes;
+    r.peak_bytes = stats.peak_bytes;
+    r.alloc_count = stats.alloc_count;
+    r.free_count = stats.free_count;
+    r.fail_count = stats.fail_count;
     unsafe { out.write(r) };
 }
 
@@ -485,21 +427,22 @@ pub extern "C" fn pjs_probe_mem_stats(
     frees: *mut u32,
     fails: *mut u32,
 ) {
+    let stats = pocketjs_rtthread_runtime::alloc_stats();
     unsafe {
         if !live.is_null() {
-            live.write(LIVE_BYTES.load(Ordering::Relaxed));
+            live.write(stats.live_bytes);
         }
         if !peak.is_null() {
-            peak.write(PEAK_BYTES.load(Ordering::Relaxed));
+            peak.write(stats.peak_bytes);
         }
         if !allocs.is_null() {
-            allocs.write(ALLOC_COUNT.load(Ordering::Relaxed));
+            allocs.write(stats.alloc_count);
         }
         if !frees.is_null() {
-            frees.write(FREE_COUNT.load(Ordering::Relaxed));
+            frees.write(stats.free_count);
         }
         if !fails.is_null() {
-            fails.write(FAIL_COUNT.load(Ordering::Relaxed));
+            fails.write(stats.fail_count);
         }
     }
 }

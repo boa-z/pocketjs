@@ -23,11 +23,38 @@
 //! Alignment is passed through unchanged, `layout.align()` straight to the host.
 //! Do not add a "host-guaranteed alignment" fast path: a hardcoded alignment
 //! assumption is exactly what the Gate 0 hardware failure was.
+//!
+//! # This crate is the only owner of the Rust runtime lang items
+//!
+//! `#[global_allocator]` and `#[panic_handler]` are declared here and nowhere
+//! else in the image. That is a hard requirement, not a style choice.
+//!
+//! rustc lowers those two lang items into `#[rustc_std_internal_symbol]` shims
+//! whose symbol names are *fixed* (`__rustc` plus a constant disambiguator)
+//! precisely so that one copy can serve a whole link. Because the name is fixed,
+//! `-Cmetadata` cannot rename it, and because a Rust `staticlib` always bundles
+//! its dependency graph, two archives that each declare the lang items put the
+//! same five symbols on the link line twice - `__rust_alloc`, `__rust_dealloc`,
+//! `__rust_realloc`, `__rust_alloc_zeroed` and `rust_begin_unwind`. That is a
+//! hard "multiple definition" error.
+//!
+//! The ESP-IDF host has the same shape and avoids it the same way: its two
+//! archives (`ui-core`, `render-rgb565`) both bundle `pocketjs-idf-runtime`,
+//! which is the only crate there that declares these lang items. Feature crates
+//! consume the runtime; they never provide one.
+//!
+//! So: a new crate that needs an allocator depends on this one. It does not
+//! declare its own.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+use core::alloc::Layout;
+use core::sync::atomic::{AtomicU32, Ordering};
+
 #[cfg(not(feature = "std"))]
-use core::alloc::{GlobalAlloc, Layout};
+use core::alloc::GlobalAlloc;
+#[cfg(not(feature = "std"))]
+use core::ptr;
 
 #[cfg(not(feature = "std"))]
 unsafe extern "C" {
@@ -54,19 +81,111 @@ pub fn host_log(msg: &[u8]) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Allocation telemetry
+// ---------------------------------------------------------------------------
+
+static LIVE_BYTES: AtomicU32 = AtomicU32::new(0);
+static PEAK_BYTES: AtomicU32 = AtomicU32::new(0);
+static ALLOC_COUNT: AtomicU32 = AtomicU32::new(0);
+static FREE_COUNT: AtomicU32 = AtomicU32::new(0);
+static FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Snapshot of the counters below.
+///
+/// Read by the port's Gate 0 probe, which reports them on the console. They are
+/// **image-wide**, not per-crate: there is one allocator in the image, so these
+/// count every Rust allocation in it. On a probe-only firmware that is exactly
+/// the probe's own traffic, which is what Gate 0's report records.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct AllocStats {
+    pub live_bytes: u32,
+    pub peak_bytes: u32,
+    pub alloc_count: u32,
+    pub free_count: u32,
+    pub fail_count: u32,
+}
+
+/// Read the allocator counters. Cheap, lock-free, safe to call from any thread.
+pub fn alloc_stats() -> AllocStats {
+    AllocStats {
+        live_bytes: LIVE_BYTES.load(Ordering::Relaxed),
+        peak_bytes: PEAK_BYTES.load(Ordering::Relaxed),
+        alloc_count: ALLOC_COUNT.load(Ordering::Relaxed),
+        free_count: FREE_COUNT.load(Ordering::Relaxed),
+        fail_count: FAIL_COUNT.load(Ordering::Relaxed),
+    }
+}
+
+/// Bytes requested from the host for `layout`. Deterministic, so `dealloc` can
+/// recompute it without extra bookkeeping. This is the *caller's* size: the
+/// host's own header and padding are its business, not the guest's.
+fn request_size(layout: &Layout) -> usize {
+    if layout.size() == 0 {
+        1
+    } else {
+        layout.size()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The allocator
+// ---------------------------------------------------------------------------
+
 #[cfg(not(feature = "std"))]
 struct RtThreadAllocator;
 
 #[cfg(not(feature = "std"))]
 unsafe impl GlobalAlloc for RtThreadAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let size = request_size(&layout);
+
+        // Cannot overflow for realistic layouts, but keep the guard explicit:
+        // a bogus Layout must fail, not wrap.
+        if size > (u32::MAX as usize) {
+            FAIL_COUNT.fetch_add(1, Ordering::Relaxed);
+            return ptr::null_mut();
+        }
+
         // ILP32: usize is 32 bits, so the narrowing is lossless. The cast is
         // explicit because the host seam is `uint32_t`-typed.
-        pjs_host_alloc(layout.size() as u32, layout.align() as u32)
+        let raw = unsafe { pjs_host_alloc(size as u32, layout.align() as u32) };
+        if raw.is_null() {
+            FAIL_COUNT.fetch_add(1, Ordering::Relaxed);
+            return ptr::null_mut();
+        }
+
+        ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
+        let live = LIVE_BYTES.fetch_add(size as u32, Ordering::Relaxed) + size as u32;
+        // Single-threaded owner by contract (see the RT-Thread thread model),
+        // so a plain compare-and-store keeps the peak accurate enough for
+        // telemetry.
+        let mut peak = PEAK_BYTES.load(Ordering::Relaxed);
+        while live > peak {
+            match PEAK_BYTES.compare_exchange_weak(
+                peak,
+                live,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => peak = observed,
+            }
+        }
+
+        raw
     }
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        pjs_host_free(pointer, layout.align() as u32);
+        if pointer.is_null() {
+            return;
+        }
+        // GlobalAlloc guarantees `dealloc` sees the allocating layout, so the
+        // same alignment goes back and the host knows whether it used a header.
+        unsafe { pjs_host_free(pointer, layout.align() as u32) };
+
+        FREE_COUNT.fetch_add(1, Ordering::Relaxed);
+        LIVE_BYTES.fetch_sub(request_size(&layout) as u32, Ordering::Relaxed);
     }
 }
 

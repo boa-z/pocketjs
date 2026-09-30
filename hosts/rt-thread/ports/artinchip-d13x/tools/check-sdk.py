@@ -48,6 +48,7 @@ SEARCH_GLOBS = ("*.h", "*.c")
 PORT_PATHS = (
     "application/rt-thread/pocketjs-smoke/",
     "application/rt-thread/pocketjs-smoke/third_party/pocketjs/",
+    "application/rt-thread/pocketjs-smoke/third_party/pocketjs_ui_core/",
     "target/configs/d13x_d50t-2-lite_rt-thread_pocketjs-smoke_defconfig",
 )
 
@@ -163,7 +164,7 @@ def main() -> int:
     entries = pe.sdk_dirty_entries()
     stray = [
         e for e in entries
-        if not any(e[3:].strip().strip('"').startswith(p) for p in PORT_PATHS)
+        if e[3:].strip().strip('"') != ".gitmodules" and not any(e[3:].strip().strip('"').startswith(p) for p in PORT_PATHS)
     ]
     if stray:
         if args.override_sdk:

@@ -54,6 +54,70 @@ pocketjs_host.c  -> pjs_host_abort / pjs_host_log
 `pocketjs-rtthread-runtime` binds Rust's `GlobalAlloc` and `#[panic_handler]` to
 those. A second implementation here would put two allocators on one heap.
 
+## Two archives, one runtime, and how the duplicate is made harmless
+
+A firmware that links both the Gate 0 probe and this component puts two Rust
+`staticlib`s on the link line, and a Rust `staticlib` always bundles its
+dependency graph. So both archives carry `core`, `alloc`, `compiler_builtins`
+and `pocketjs-rtthread-runtime`.
+
+That is fine, for a specific reason: **the shared crates are built identically in
+both archives**, so the linker extracts one copy to satisfy every reference and
+never needs the second. Nothing is defined twice. Two properties make that true,
+and both are required.
+
+**1. Exactly one crate declares the runtime lang items.**
+`#[global_allocator]` and `#[panic_handler]` are declared only in
+`pocketjs-rtthread-runtime`. rustc lowers them into
+`#[rustc_std_internal_symbol]` shims whose names are *fixed* — `__rustc` plus a
+constant disambiguator — precisely so one copy can serve a whole link. Because
+the name is fixed, `-Cmetadata` cannot rename it, and two crates declaring the
+lang items collide whatever flags are passed:
+
+```
+multiple definition of `_RNvCs4iuDAxO633X_7___rustc12___rust_alloc'
+```
+
+This matches the ESP-IDF host, where `pocketjs-idf-runtime` is the only
+declarer and both `ui-core` and `render-rgb565` consume it. A feature crate
+depends on the runtime; it never provides one.
+
+**2. Every crate in the image shares one release profile.**
+Cargo folds the release profile into the metadata hash it turns into
+`-Cmetadata`, so crates built with different profiles get *differently named*
+copies of the shared dependencies. The linker then cannot satisfy this
+component's references from the probe's copy, extracts both, and the fixed-name
+shims collide. `tools/build-native.py` therefore reads every crate's
+`[profile.release]` and refuses to build unless they match key for key.
+
+### What does not work
+
+* **`-Wl,--no-whole-archive` alone.** It resolves member by member, but a member
+  is pulled as a whole: the runtime shim's codegen unit carries `host_log`, which
+  only this component needs, so pulling it for `host_log` drags in that archive's
+  `__rust_alloc` too.
+* **Per-crate `-Cmetadata` namespacing.** An earlier revision did this; it is the
+  wrong instrument. It makes the two copies of `core`/`alloc` *differently named*
+  rather than identical, which is exactly what forces the linker to extract both.
+  Left unchecked it would turn a loud "multiple definition" error into two
+  silently incompatible allocators in one image — the hazard the ESP-IDF
+  wrapper's own comment warns about. Cargo's per-package metadata already keeps
+  the two root crates' symbols apart, so nothing extra is needed.
+
+## Self-test
+
+`src/pocketjs_ui_core_demo.c` registers two MSH commands, gated by
+`LPKG_POCKETJS_UI_CORE_DEMO`:
+
+| Command | What it does |
+|---------|--------------|
+| `pjs_ui [w] [h]` | One full cycle: create, build a tree, style/prop/text, tick, draw, hit-test, destroy — plus the leak check. |
+| `pjs_ui_stress [n]` | The same cycle n times, asserting the host allocator's live count returns to baseline every round. |
+
+The frame checks are the point. `frame_validate()` must reject a saved view
+after a redraw, after a mutation and after a tick, and must accept the current
+one — that is the borrow contract in executable form, not a convenience.
+
 ## Ownership
 
 One caller-selected thread owns each core instance. Pointers in frame, texture
