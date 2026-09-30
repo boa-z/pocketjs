@@ -839,14 +839,21 @@ rt_err_t pocketjs_ui_turn(pocketjs_ui_qjs_t *binding,
   uint32_t touches[POCKETJS_UI_MAX_TOUCHES] = {0};
   int32_t hits[POCKETJS_UI_MAX_TOUCHES] = {0};
   for (size_t index = 0; index < input->touch_count; ++index) {
-    if (input->touches[index].x > 511U || input->touches[index].y > 511U) {
+    if (input->touches[index].x > 1023U || input->touches[index].y > 1023U) {
       return -RT_EINVAL;
     }
-    touches[index] = ((uint32_t)input->touches[index].id << 18U) |
-                     ((uint32_t)input->touches[index].y << 9U) |
+    for (size_t previous = 0; previous < index; ++previous)
+      if (input->touches[previous].id == input->touches[index].id)
+        return -RT_EINVAL;
+    const bool wide = input->touches[index].x > 511U ||
+                      input->touches[index].y > 511U;
+    touches[index] = (wide ? 0x80000000U : 0U) |
+                     ((uint32_t)input->touches[index].id << (wide ? 20U : 18U)) |
+                     ((uint32_t)input->touches[index].y << (wide ? 10U : 9U)) |
                      input->touches[index].x;
   }
-  if (input->touch_count != 0U) {
+  /* An empty snapshot releases captured IDs before the next down edge. */
+  {
     const size_t hit_count =
         pocketjs_ui_core_touch_hits(binding->core, touches, input->touch_count,
                                     hits, POCKETJS_UI_MAX_TOUCHES);

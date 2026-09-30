@@ -528,9 +528,6 @@ pub unsafe extern "C" fn pocketjs_native_ui_touch_hits(
     {
         return 0;
     }
-    if touch_count == 0 {
-        return 0;
-    }
     let Some(core) = core_mut(core) else { return 0 };
     let touches = slice::from_raw_parts(touches, touch_count);
     let mut hits = [0i32; 8];

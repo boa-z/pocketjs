@@ -14,7 +14,9 @@ extern "C" {
 typedef struct pocketjs_ui_qjs pocketjs_ui_qjs_t;
 
 typedef struct {
+  /** Stable while down, reusable after an empty/released snapshot. */
   uint8_t id;
+  /** Logical pixels, 0..1023; uses the shared legacy/wide wire encoding. */
   uint16_t x;
   uint16_t y;
 } pocketjs_ui_touch_t;
