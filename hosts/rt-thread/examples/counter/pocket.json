@@ -1,0 +1,15 @@
+{
+  "$schema": "https://pocketjs.dev/schema/pocket-2.json",
+  "pocket": 2,
+  "id": "dev.pocket-stack.d13x-counter",
+  "name": "d13x-counter",
+  "title": "D13x TSX Counter",
+  "version": "0.1.0",
+  "engine": { "capabilities": { "requires": ["text.glyphs.baked"] } },
+  "app": {
+    "entry": "app.tsx",
+    "output": "d13x-counter",
+    "framework": "solid",
+    "viewport": { "logical": [800, 480], "presentation": "native" }
+  }
+}

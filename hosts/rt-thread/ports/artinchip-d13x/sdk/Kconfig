@@ -91,3 +91,8 @@ config LPKG_USING_POCKETJS_GUEST
     help
       PSRAM-only JavaScript allocator, bounded synchronous turns and Promise
       jobs. No POSIX libc helpers, worker threads, eval-file or module loader.
+
+config LPKG_USING_POCKETJS_PACKAGE
+    bool "PocketJS package reader and embedded TSX example"
+    depends on LPKG_USING_POCKETJS_GUEST && LPKG_USING_POCKETJS_RENDER_RGB565
+    default n

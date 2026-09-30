@@ -72,4 +72,12 @@ if GetDepend('LPKG_USING_POCKETJS_GUEST'):
         group += DefineGroup(component, Glob(os.path.join(obj, '*.c')),
             depend=['LPKG_USING_POCKETJS_GUEST'], CPPPATH=includes, LOCAL_CCFLAGS=' -std=gnu11')
 
+if GetDepend('LPKG_USING_POCKETJS_PACKAGE'):
+    package = os.path.join(host, 'components', 'pocketjs_package')
+    obj = os.path.join(repo, '.pocket-build', 'd13x', 'c-package')
+    Env.VariantDir(obj, os.path.join(package, 'src'), duplicate=0)
+    group += DefineGroup('pocketjs_package', Glob(os.path.join(obj, '*.c')),
+        depend=['LPKG_USING_POCKETJS_PACKAGE'],
+        CPPPATH=[os.path.join(package, 'include')], LOCAL_CCFLAGS=' -std=gnu11')
+
 Return('group')

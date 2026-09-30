@@ -10,7 +10,9 @@ import portenv as pe
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--ui', action='store_true', help='link actual Rust UI/renderer; mock only framebuffer I/O')
+    ap.add_argument('--package', action='store_true', help='compile and execute the real TSX package')
     args = ap.parse_args()
+    args.ui = args.ui or args.package
     repo = pe.repo_root()
     dest = repo / '.pocket-build/host-guest'
     dest.mkdir(parents=True, exist_ok=True)
@@ -19,6 +21,8 @@ def main():
         print('No native GCC; guest tests NOT RUN')
         return 2
     subprocess.run([sys.executable, str(pe.TOOLS_DIR/'prepare-quickjs.py')], check=True)
+    if args.package:
+        subprocess.run([sys.executable, str(pe.TOOLS_DIR/'build-app.py')], check=True)
     (dest/'rtthread.h').write_text(r'''
 #pragma once
 #include <stdint.h>
@@ -64,6 +68,10 @@ int main(void) {
     result |= pjs_render_selftest();
     result |= pjs_js_display();
 #endif
+#ifdef LPKG_USING_POCKETJS_PACKAGE
+    extern int pjs_package_selftest(void);
+    result |= pjs_package_selftest();
+#endif
     return result ? 1 : 0;
 }
 ''', encoding='utf-8')
@@ -76,6 +84,11 @@ int main(void) {
         cmd += ['-I', str(include)]
     cmd += [str(qjs/name) for name in ('quickjs.c','dtoa.c','libregexp.c','libunicode.c')]
     cmd += [str(guest/'src/guest.c'), str(app/'pjs_js.c'), str(dest/'host.c')]
+    if args.package:
+        package = repo/'hosts/rt-thread/components/pocketjs_package'
+        embedded = repo/'.pocket-build/d13x/counter/embedded'
+        cmd += ['-DLPKG_USING_POCKETJS_PACKAGE', '-I', str(package/'include'), '-I', str(embedded),
+                str(package/'src/package.c'), str(embedded/'pocketjs_package_counter.c'), str(app/'pjs_package.c')]
     if args.ui:
         target = 'x86_64-pc-windows-gnu' if os.name == 'nt' else 'x86_64-unknown-linux-gnu'
         rust = dest/'rust'
@@ -104,6 +117,7 @@ void mpp_fb_close(struct mpp_fb *);
         (dest/'scanout.c').write_text(r'''
 #include "mpp_fb.h"
 #include <stdlib.h>
+#include <stdio.h>
 static struct mpp_fb fb;
 static uint8_t *pixels;
 struct mpp_fb *mpp_fb_open(void) {
@@ -117,7 +131,11 @@ int mpp_fb_ioctl(struct mpp_fb *f, int request, void *out) {
     *(struct aicfb_screeninfo *)out = (struct aicfb_screeninfo){pixels,800,480,1600,1,16,480*1600};
     return 0;
 }
-void mpp_fb_close(struct mpp_fb *f) { (void)f; free(pixels); pixels = NULL; }
+void mpp_fb_close(struct mpp_fb *f) {
+    (void)f; const char *path = getenv("PJS_FRAME_CAPTURE");
+    if (path && pixels) { FILE *out = fopen(path, "wb"); if(out) { fwrite(pixels,1,480*1600,out); fclose(out); } }
+    free(pixels); pixels = NULL;
+}
 ''', encoding='utf-8')
         cmd += ['-DLPKG_USING_POCKETJS_GUEST', str(app/'pjs_render.c'), str(dest/'scanout.c')]
         for component, source in (('ui_core','ui_core.c'), ('ui_qjs','ui_qjs.c'), ('render_rgb565','render_rgb565.c')):
@@ -131,7 +149,7 @@ void mpp_fb_close(struct mpp_fb *f) { (void)f; free(pixels); pixels = NULL; }
         print('HOST ONLY: real QuickJS/UI/RGB565, simulated scanout; Rust uses host std allocator', flush=True)
     cmd += ['-lm', '-o', str(exe)]
     subprocess.run(cmd, check=True)
-    return subprocess.run([str(exe)], timeout=30).returncode
+    return subprocess.run([str(exe)], timeout=90).returncode
 
 if __name__ == '__main__':
     sys.exit(main())

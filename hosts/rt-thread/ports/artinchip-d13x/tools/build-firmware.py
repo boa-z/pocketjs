@@ -312,6 +312,11 @@ def main() -> int:
               cwd=pe.repo_root(), label="prepare pinned QuickJS-ng")
     if rc != 0:
         return rc
+    if 'CONFIG_LPKG_USING_POCKETJS_PACKAGE=y' in (sdk / '.config').read_text():
+        rc = _run([sys.executable, str(pe.TOOLS_DIR / 'build-app.py')],
+                  cwd=pe.repo_root(), label='build and embed TSX package')
+        if rc != 0:
+            return rc
     rc = scons(jobs=args.jobs)
     if rc != 0:
         return rc
