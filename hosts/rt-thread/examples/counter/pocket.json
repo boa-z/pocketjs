@@ -5,7 +5,7 @@
   "name": "d13x-counter",
   "title": "D13x TSX Counter",
   "version": "0.1.0",
-  "engine": { "capabilities": { "requires": ["text.glyphs.baked"] } },
+  "engine": { "capabilities": { "requires": ["input.buttons", "text.glyphs.baked"] } },
   "app": {
     "entry": "app.tsx",
     "output": "d13x-counter",

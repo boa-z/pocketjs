@@ -1,7 +1,8 @@
 import { createSignal } from "solid-js";
 import { mount } from "@pocketjs/framework/solid";
 import { Text, View } from "@pocketjs/framework/solid/components";
-import { onFrame } from "@pocketjs/framework/lifecycle";
+import { onFrame, onButtonPress } from "@pocketjs/framework/lifecycle";
+import { BTN } from "@pocketjs/framework/input";
 
 function Counter() {
   const [count, setCount] = createSignal(0);
@@ -9,6 +10,7 @@ function Counter() {
   onFrame(() => {
     if (++frames % 60 === 0) setCount(value => value + 1);
   });
+  onButtonPress(BTN.CIRCLE, () => setCount(value => value + 1));
   // Diagnostic accessor exposes real Solid state; the native probe also checks pixels.
   (globalThis as any).__counterValue = count;
   return (

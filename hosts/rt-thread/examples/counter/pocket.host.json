@@ -10,5 +10,5 @@
     "presentations": ["native"],
     "rasterDensity": 1
   },
-  "capabilities": ["text.glyphs.baked"]
+  "capabilities": ["input.buttons", "text.glyphs.baked"]
 }

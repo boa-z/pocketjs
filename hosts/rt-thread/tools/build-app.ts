@@ -18,7 +18,7 @@ const profile = JSON.parse(readFileSync(resolve(example, "pocket.host.json"), "u
 if (profile.version !== 1 || profile.platform !== "rt-thread" || profile.id !== "d13x-smoke" ||
     profile.tickHz !== 60 || profile.form !== "embedded" ||
     canonicalJson(profile.display) !== canonicalJson({ physicalViewport:[800,480], logicalViewports:[[800,480]], presentations:["native"], rasterDensity:1 }) ||
-    canonicalJson(profile.capabilities) !== canonicalJson(["text.glyphs.baked"]))
+    canonicalJson(profile.capabilities) !== canonicalJson(["input.buttons", "text.glyphs.baked"]))
   throw new Error("RT-Thread profile is outside the validated D13x smoke contract");
 const manifestBytes = readFileSync(resolve(example, "pocket.json"));
 const manifest = JSON.parse(manifestBytes.toString("utf8"));
