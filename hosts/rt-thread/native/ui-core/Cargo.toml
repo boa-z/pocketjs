@@ -23,7 +23,7 @@ pocketjs-rtthread-runtime = { path = "../runtime", default-features = false }
 
 [features]
 default = ["std"]
-std = ["pocketjs-core/std", "pocketjs-rtthread-runtime/std"]
+std = ["pocketjs-rtthread-runtime/std"]
 
 # MUST match `hosts/rt-thread/ports/artinchip-d13x/rust/abi-probe/Cargo.toml`
 # key for key, so that crates shared by both archives - `core`, `alloc`,

@@ -11,8 +11,9 @@ import { encodePocketPackage, encodeHostInputs, POCKET_SECTION, decodePocketPack
 import { makeVariant } from "../../../tools/pocket-pack.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const example = resolve(root, "hosts/rt-thread/examples/counter");
-const out = resolve(root, ".pocket-build/d13x/counter");
+const appName = process.env.PJS_APP === "hero" ? "hero" : "counter";
+const example = resolve(root, `hosts/rt-thread/examples/${appName}`);
+const out = resolve(root, `.pocket-build/d13x/${appName}`);
 const profile = JSON.parse(readFileSync(resolve(example, "pocket.host.json"), "utf8"));
 // This adapter currently admits only the validated D13x smoke presentation.
 if (profile.version !== 1 || profile.platform !== "rt-thread" || profile.id !== "d13x-smoke" ||
@@ -51,6 +52,6 @@ variant.sections.push({kind:POCKET_SECTION.hostInputs, bytes:encodeHostInputs({
 })});
 const bytes = encodePocketPackage({manifest:manifestBytes, variants:[variant]});
 decodePocketPackage(bytes); // Verify the container footer/table before embedding.
-const destination = resolve(out, "counter.pocket");
+const destination = resolve(out, `${appName}.pocket`);
 writeFileSync(destination, bytes);
 console.log(JSON.stringify({package:destination, bytes:bytes.length, target:profile.id, profileHash, planHash:plan.planHash}));

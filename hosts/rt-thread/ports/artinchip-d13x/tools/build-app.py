@@ -12,10 +12,14 @@ def main():
     if not bun:
         raise SystemExit('Bun required: set BUN to its executable and run bun install --frozen-lockfile --ignore-scripts in PocketJS')
     subprocess.run([bun, 'hosts/rt-thread/tools/build-app.ts'], cwd=repo, check=True)
-    dest = repo / '.pocket-build/d13x/counter'
+    app_name = os.environ.get('PJS_APP', 'counter')
+    if app_name not in ('counter', 'hero'):
+        raise SystemExit('PJS_APP must be counter or hero')
+    dest = repo / ('.pocket-build/d13x/' + app_name)
+    package_name = app_name + '.pocket'
     subprocess.run([sys.executable, str(repo/'hosts/rt-thread/components/pocketjs_package/tools/embed_package.py'),
-        '--package', str(dest/'counter.pocket'), '--host-profile',
-        str(repo/'hosts/rt-thread/examples/counter/pocket.host.json'), '--name', 'counter',
+        '--package', str(dest/package_name), '--host-profile',
+        str(repo/('hosts/rt-thread/examples/' + app_name + '/pocket.host.json')), '--name', app_name,
         '--output-dir', str(dest/'embedded')], cwd=repo, check=True)
     return 0
 

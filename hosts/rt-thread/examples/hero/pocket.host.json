@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "d13x-smoke",
+  "platform": "rt-thread",
+  "form": "embedded",
+  "tickHz": 60,
+  "display": {
+    "physicalViewport": [800, 480],
+    "logicalViewports": [[800, 480]],
+    "presentations": ["native"],
+    "rasterDensity": 1
+  },
+  "capabilities": ["input.buttons", "text.glyphs.baked"]
+}

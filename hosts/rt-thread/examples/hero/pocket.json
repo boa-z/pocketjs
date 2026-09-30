@@ -1,0 +1,15 @@
+{
+  "$schema": "https://pocketjs.dev/schema/pocket-2.json",
+  "pocket": 2,
+  "id": "dev.pocket-stack.hero",
+  "name": "pocketjs-hero",
+  "title": "PocketJS: Hero",
+  "version": "0.6.0",
+  "engine": { "capabilities": { "requires": ["input.buttons", "text.glyphs.baked"] } },
+  "app": {
+    "entry": "apps/hero/main.tsx",
+    "output": "hero-main",
+    "framework": "solid",
+    "viewport": { "logical": [800, 480], "presentation": "native" }
+  }
+}
