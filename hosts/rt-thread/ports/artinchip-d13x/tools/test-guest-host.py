@@ -38,6 +38,7 @@ typedef uint32_t rt_tick_t;
 #define RT_ENOMEM 5
 #define RT_ENOSYS 6
 #define RT_EINVAL 10
+#define RT_EBUSY 7
 #define rt_kprintf printf
 #define MSH_CMD_EXPORT(a,b)
 rt_tick_t rt_tick_get(void);
@@ -47,6 +48,7 @@ rt_tick_t rt_tick_get(void);
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "rtthread.h"
 #include "pocketjs_port.h"
 static pjs_heap_stats_t stats;
 void *pjs_host_alloc(uint32_t size, uint32_t align) {
@@ -71,6 +73,19 @@ uint32_t rt_tick_get(void) {
 }
 int pjs_js_selftest(void);
 int pjs_budget_selftest(void);
+static int (*test_frame_handler)(void);
+static unsigned test_health_failures;
+int pjs_guest_run(int (*operation)(void)) { return operation(); }
+int pjs_guest_set_frame_handler(int (*frame)(void), unsigned hz) {
+    if (frame && (!hz || hz > RT_TICK_PER_SECOND)) return -RT_EINVAL;
+    test_frame_handler = frame;
+    return RT_EOK;
+}
+int pjs_test_pump_frame(void) {
+    return test_frame_handler ? test_frame_handler() : -RT_ENOSYS;
+}
+void pjs_ota_mark_unhealthy(void) { ++test_health_failures; }
+unsigned pjs_test_health_failures(void) { return test_health_failures; }
 int main(void) {
     int result = pjs_budget_selftest();
     result |= pjs_js_selftest();
@@ -83,6 +98,8 @@ int main(void) {
 #ifdef LPKG_USING_POCKETJS_PACKAGE
     extern int pjs_package_selftest(void);
     result |= pjs_package_selftest();
+    extern int pjs_package_runtime_selftest(void);
+    result |= pjs_package_runtime_selftest();
 #endif
     return result ? 1 : 0;
 }
@@ -101,8 +118,9 @@ int main(void) {
         app_name = os.environ.get('PJS_APP', 'counter')
         package = repo/'hosts/rt-thread/components/pocketjs_package'
         embedded = repo/f'.pocket-build/d13x/{app_name}/embedded'
-        cmd += ['-DLPKG_USING_POCKETJS_PACKAGE', '-I', str(package/'include'), '-I', str(embedded),
-                str(package/'src/package.c'), str(embedded/f'pocketjs_package_{app_name}.c'), str(app/'pjs_package.c')]
+        cmd += ['-DLPKG_USING_POCKETJS_PACKAGE', '-DPJS_CAN_OTA', '-I', str(package/'include'), '-I', str(embedded),
+                str(package/'src/package.c'), str(embedded/f'pocketjs_package_{app_name}.c'),
+                str(app/'pjs_package.c'), str(app/'pjs_hero_session.c')]
     if args.ui:
         target = 'x86_64-pc-windows-gnu' if os.name == 'nt' else 'x86_64-unknown-linux-gnu'
         rust = dest/'rust'
@@ -134,15 +152,22 @@ void mpp_fb_close(struct mpp_fb *);
 #include <stdio.h>
 static struct mpp_fb fb;
 static uint8_t *pixels;
+static int fail_vsync, bad_screen;
+void pjs_test_fail_vsync(void) { fail_vsync = 1; }
+void pjs_test_bad_screen(int enabled) { bad_screen = enabled; }
 struct mpp_fb *mpp_fb_open(void) {
     pixels = calloc(480,1600);
     return pixels ? &fb : NULL;
 }
 int mpp_fb_ioctl(struct mpp_fb *f, int request, void *out) {
     (void)f;
-    if (request == AICFB_WAIT_FOR_VSYNC) return 0;
+    if (request == AICFB_WAIT_FOR_VSYNC) {
+        if (fail_vsync) { fail_vsync = 0; return -1; }
+        return 0;
+    }
     if (request != AICFB_GET_SCREENINFO || !out) return -1;
     *(struct aicfb_screeninfo *)out = (struct aicfb_screeninfo){pixels,800,480,1600,1,16,480*1600};
+    if (bad_screen) ((struct aicfb_screeninfo *)out)->stride = 1;
     return 0;
 }
 void mpp_fb_close(struct mpp_fb *f) {
