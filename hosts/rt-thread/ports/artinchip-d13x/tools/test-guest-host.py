@@ -64,7 +64,8 @@ int pjs_js_selftest(void);
 int main(void) {
     int result = pjs_js_selftest();
 #ifdef LPKG_USING_POCKETJS_GUEST
-    extern int pjs_render_selftest(void), pjs_js_display(void);
+    extern int pjs_render_selftest(void), pjs_js_display(void), pjs_touch_selftest(void);
+    result |= pjs_touch_selftest();
     result |= pjs_render_selftest();
     result |= pjs_js_display();
 #endif
@@ -137,7 +138,7 @@ void mpp_fb_close(struct mpp_fb *f) {
     free(pixels); pixels = NULL;
 }
 ''', encoding='utf-8')
-        cmd += ['-DLPKG_USING_POCKETJS_GUEST', str(app/'pjs_render.c'), str(dest/'scanout.c')]
+        cmd += ['-DLPKG_USING_POCKETJS_GUEST', str(app/'pjs_render.c'), str(app/'pjs_touch.c'), str(dest/'scanout.c')]
         for component, source in (('ui_core','ui_core.c'), ('ui_qjs','ui_qjs.c'), ('render_rgb565','render_rgb565.c')):
             base = host/'components'/('pocketjs_'+component)
             cmd += ['-I', str(base/'include'), str(base/'src'/source)]
