@@ -21,6 +21,15 @@ budget exhaustion makes the realm unusable until destroyed. Ordinary JS errors,
 stack overflow and JS heap-limit failures can recover on a later eval. This is
 not a preemptive time limit on native methods or a security sandbox.
 
+`pocketjs_guest_eval_with_timeout` accepts **1..60000 ms** for one evaluation,
+including its Promise drain. This lets a host admit a package whose cold parse
+and initialization exceed the default second. The **10000-poll and 256-job
+limits remain active**. Subsequent calls to `pocketjs_guest_eval` or
+`pocketjs_guest_frame` use the default second; the override does not persist.
+Zero and out-of-range budgets return `-RT_EINVAL` without executing JavaScript.
+On interruption, the log reports the cause (`requested`, `poll-limit`, or
+`wall-clock`), elapsed milliseconds, selected budget, and consumed polls.
+
 One owner thread performs creation, surface installation, eval, frames, stats
 and destruction. Only interrupt may be called from another thread. Destruction
 must not race with interruption. Surfaces reserve names once per realm.
@@ -31,3 +40,8 @@ links real Rust retained UI and RGB565 libraries, simulating only framebuffer
 I/O; Rust uses its std host allocator for that test. Native GCC, stable Rust and
 the matching GNU target are required. Host passes do not prove RV32 stack use,
 PSRAM placement, cache coherence or LCD scanout.
+
+The runner also executes `tools/tests/guest-budget.c` with a controlled tick
+source. It checks the default deadline, extended evaluation, restoration of
+frame/eval deadlines, invalid budgets, polling with a stopped clock, explicit
+cancellation, exhausted-realm rejection, and allocation cleanup.

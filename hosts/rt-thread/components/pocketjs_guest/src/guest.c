@@ -11,6 +11,10 @@
 #define CONFIG_POCKETJS_GUEST_HEAP_LIMIT (4U * 1024U * 1024U)
 #endif
 
+#define GUEST_DEFAULT_TIMEOUT_MS 1000U
+#define GUEST_MAX_EVAL_TIMEOUT_MS 60000U
+#define GUEST_INTERRUPT_LIMIT 10000U
+
 typedef union {
   size_t size;
   max_align_t alignment;
@@ -42,6 +46,8 @@ struct pocketjs_guest {
   uint32_t frame_errors;
   uint32_t jobs;
   rt_tick_t turn_start;
+  rt_tick_t turn_budget;
+  uint32_t turn_timeout_ms;
   uint32_t interrupts_left;
   bool exhausted;
 };
@@ -51,10 +57,13 @@ int64_t pjs_quickjs_time_us(void) {
   return (int64_t)rt_tick_get() * 1000000 / RT_TICK_PER_SECOND;
 }
 
-static void guest_begin_turn(pocketjs_guest_t *guest) {
+static void guest_begin_turn(pocketjs_guest_t *guest, uint32_t timeout_ms) {
   JS_UpdateStackTop(guest->runtime);
   guest->turn_start = rt_tick_get();
-  guest->interrupts_left = 10000;
+  guest->turn_timeout_ms = timeout_ms;
+  guest->turn_budget =
+      (rt_tick_t)(((uint64_t)timeout_ms * RT_TICK_PER_SECOND + 999U) / 1000U);
+  guest->interrupts_left = GUEST_INTERRUPT_LIMIT;
 }
 
 static void guest_dump_error(JSContext *ctx) {
@@ -137,10 +146,25 @@ static int guest_interrupt(JSRuntime *runtime, void *opaque) {
     return 0;
   const unsigned int requested =
       atomic_load_explicit(&guest->interrupt_epoch, memory_order_relaxed);
-  if (guest->exhausted || requested != guest->handled_interrupt_epoch ||
-      !guest->interrupts_left ||
-      (rt_tick_t)(rt_tick_get() - guest->turn_start) >= RT_TICK_PER_SECOND) {
+  if (guest->exhausted) {
+    return 1;
+  }
+  const rt_tick_t elapsed = (rt_tick_t)(rt_tick_get() - guest->turn_start);
+  const char *reason = NULL;
+  if (requested != guest->handled_interrupt_epoch) {
+    reason = "requested";
+  } else if (!guest->interrupts_left) {
+    reason = "poll-limit";
+  } else if (elapsed >= guest->turn_budget) {
+    reason = "wall-clock";
+  }
+  if (reason) {
     guest->exhausted = true;
+    rt_kprintf("[pjs-js] interrupt reason=%s elapsed_ms=%u budget_ms=%u polls=%u\n",
+               reason,
+               (unsigned)((uint64_t)elapsed * 1000U / RT_TICK_PER_SECOND),
+               (unsigned)guest->turn_timeout_ms,
+               (unsigned)(GUEST_INTERRUPT_LIMIT - guest->interrupts_left));
     return 1;
   }
   --guest->interrupts_left;
@@ -258,7 +282,7 @@ rt_err_t pocketjs_guest_create(const pocketjs_guest_config_t *config,
   JS_SetRuntimeInfo(guest->runtime, "PocketJS RT-Thread guest");
   JS_SetInterruptHandler(guest->runtime, guest_interrupt, guest);
   JS_SetHostPromiseRejectionTracker(guest->runtime, promise_rejection, guest);
-  guest_begin_turn(guest);
+  guest_begin_turn(guest, GUEST_DEFAULT_TIMEOUT_MS);
   guest->context = JS_NewContext(guest->runtime);
   if (guest->context == NULL) {
     pocketjs_guest_destroy(guest);
@@ -318,12 +342,20 @@ pocketjs_guest_quickjs_install_once(pocketjs_guest_t *guest, const char *name,
 
 rt_err_t pocketjs_guest_eval(pocketjs_guest_t *guest, const char *source,
                               size_t source_size, const char *label) {
+  return pocketjs_guest_eval_with_timeout(
+      guest, source, source_size, label, GUEST_DEFAULT_TIMEOUT_MS);
+}
+
+rt_err_t pocketjs_guest_eval_with_timeout(
+    pocketjs_guest_t *guest, const char *source, size_t source_size,
+    const char *label, uint32_t timeout_ms) {
   if (guest == NULL || guest->context == NULL || source == NULL ||
-      source_size == 0U) {
+      source_size == 0U || timeout_ms == 0U ||
+      timeout_ms > GUEST_MAX_EVAL_TIMEOUT_MS) {
     return -RT_EINVAL;
   }
   if (guest->exhausted) return -RT_ETIMEOUT;
-  guest_begin_turn(guest);
+  guest_begin_turn(guest, timeout_ms);
   JSValue result =
       JS_Eval(guest->context, source, source_size,
               label != NULL ? label : "<pocket-app>", JS_EVAL_TYPE_GLOBAL);
@@ -387,7 +419,7 @@ rt_err_t pocketjs_guest_frame(pocketjs_guest_t *guest,
     return -RT_ERROR;
   }
   if (guest->exhausted) return -RT_ETIMEOUT;
-  guest_begin_turn(guest);
+  guest_begin_turn(guest, GUEST_DEFAULT_TIMEOUT_MS);
   JSValue arguments[4] = {
       JS_NewUint32(guest->context, frame->buttons),
       JS_NewUint32(guest->context, frame->analog),

@@ -51,6 +51,15 @@ rt_err_t pocketjs_guest_create(const pocketjs_guest_config_t *config,
 rt_err_t pocketjs_guest_eval(pocketjs_guest_t *guest, const char *source,
                               size_t source_size, const char *label);
 
+/** Evaluate one global IIFE with a per-call wall-clock budget (1..60000 ms).
+ * Includes parsing, execution and Promise draining. The 10000 interrupt-poll
+ * and 256-job limits still apply. This does not change later frame/eval budgets
+ * (1000 ms). The deadline is cooperative, not a preemptive native-call limit.
+ * Timeout or cancellation requires destroying the guest. */
+rt_err_t pocketjs_guest_eval_with_timeout(
+    pocketjs_guest_t *guest, const char *source, size_t source_size,
+    const char *label, uint32_t timeout_ms);
+
 /** Call globalThis.frame(...) once and drain at most 256 Promise jobs.
  * A timeout/interrupt poisons this realm: destroy it before running more JS.
  * All APIs except interrupt require the same owner thread. The caller must

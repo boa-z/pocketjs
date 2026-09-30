@@ -59,10 +59,21 @@ void *pjs_host_alloc(uint32_t size, uint32_t align) {
 }
 void pjs_host_free(void *p, uint32_t align) { (void)align; if (p) { ++stats.frees; free(((void **)p)[-1]); } }
 void pjs_host_alloc_stats(pjs_heap_stats_t *out) { *out = stats; }
-uint32_t rt_tick_get(void) { return (uint32_t)((uint64_t)clock() * 1000 / CLOCKS_PER_SEC); }
+static int test_clock_enabled;
+static uint32_t test_ticks, test_tick_step;
+void pjs_test_clock(int enabled, uint32_t step) {
+    test_clock_enabled = enabled; test_ticks = 0; test_tick_step = step;
+}
+uint32_t pjs_test_clock_ticks(void) { return test_ticks; }
+uint32_t rt_tick_get(void) {
+    if (test_clock_enabled) { test_ticks += test_tick_step; return test_ticks; }
+    return (uint32_t)((uint64_t)clock() * 1000 / CLOCKS_PER_SEC);
+}
 int pjs_js_selftest(void);
+int pjs_budget_selftest(void);
 int main(void) {
-    int result = pjs_js_selftest();
+    int result = pjs_budget_selftest();
+    result |= pjs_js_selftest();
 #ifdef LPKG_USING_POCKETJS_GUEST
     extern int pjs_render_selftest(void), pjs_js_display(void), pjs_touch_selftest(void);
     result |= pjs_touch_selftest();
@@ -85,6 +96,7 @@ int main(void) {
         cmd += ['-I', str(include)]
     cmd += [str(qjs/name) for name in ('quickjs.c','dtoa.c','libregexp.c','libunicode.c')]
     cmd += [str(guest/'src/guest.c'), str(app/'pjs_js.c'), str(dest/'host.c')]
+    cmd += [str(pe.TOOLS_DIR/'tests/guest-budget.c')]
     if args.package:
         app_name = os.environ.get('PJS_APP', 'counter')
         package = repo/'hosts/rt-thread/components/pocketjs_package'
