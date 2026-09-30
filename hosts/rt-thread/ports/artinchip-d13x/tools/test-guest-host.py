@@ -86,10 +86,11 @@ int main(void) {
     cmd += [str(qjs/name) for name in ('quickjs.c','dtoa.c','libregexp.c','libunicode.c')]
     cmd += [str(guest/'src/guest.c'), str(app/'pjs_js.c'), str(dest/'host.c')]
     if args.package:
+        app_name = os.environ.get('PJS_APP', 'counter')
         package = repo/'hosts/rt-thread/components/pocketjs_package'
-        embedded = repo/'.pocket-build/d13x/counter/embedded'
+        embedded = repo/f'.pocket-build/d13x/{app_name}/embedded'
         cmd += ['-DLPKG_USING_POCKETJS_PACKAGE', '-I', str(package/'include'), '-I', str(embedded),
-                str(package/'src/package.c'), str(embedded/'pocketjs_package_counter.c'), str(app/'pjs_package.c')]
+                str(package/'src/package.c'), str(embedded/f'pocketjs_package_{app_name}.c'), str(app/'pjs_package.c')]
     if args.ui:
         target = 'x86_64-pc-windows-gnu' if os.name == 'nt' else 'x86_64-unknown-linux-gnu'
         rust = dest/'rust'
