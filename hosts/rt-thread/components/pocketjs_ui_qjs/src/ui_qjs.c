@@ -47,6 +47,9 @@ struct pocketjs_ui_qjs {
   sprite_registration_t *sprites;
   size_t sprite_count;
   bool mounted;
+  uint8_t contact_ids[POCKETJS_UI_MAX_TOUCHES];
+  size_t contact_count;
+  pocketjs_ui_turn_stats_t turn_stats;
 };
 
 static bool range_valid(size_t offset, size_t length, size_t total) {
@@ -822,9 +825,28 @@ static uint32_t pack_analog(int16_t value) {
   return (uint32_t)((int32_t)value + 32896) / 257U;
 }
 
+static rt_err_t finish_turn(pocketjs_ui_qjs_t *binding,
+                            const pocketjs_guest_frame_t *frame,
+                            pocketjs_ui_frame_view_t *out_frame) {
+  rt_tick_t started = rt_tick_get();
+  rt_err_t result = pocketjs_guest_frame(binding->guest, frame);
+  binding->turn_stats.guest_ticks = (rt_tick_t)(rt_tick_get() - started);
+  if (result != RT_EOK)
+    return result;
+  started = rt_tick_get();
+  pocketjs_ui_core_tick(binding->core);
+  binding->turn_stats.tick_ticks = (rt_tick_t)(rt_tick_get() - started);
+  started = rt_tick_get();
+  result = pocketjs_ui_core_draw(binding->core, out_frame);
+  binding->turn_stats.draw_ticks = (rt_tick_t)(rt_tick_get() - started);
+  return result;
+}
+
 rt_err_t pocketjs_ui_turn(pocketjs_ui_qjs_t *binding,
                            const pocketjs_ui_input_t *input,
                            pocketjs_ui_frame_view_t *out_frame) {
+  if (binding != NULL)
+    memset(&binding->turn_stats, 0, sizeof(binding->turn_stats));
   if (binding == NULL || !binding->mounted || out_frame == NULL ||
       out_frame->struct_size < sizeof(*out_frame) ||
       (input != NULL &&
@@ -854,9 +876,11 @@ rt_err_t pocketjs_ui_turn(pocketjs_ui_qjs_t *binding,
   }
   /* An empty snapshot releases captured IDs before the next down edge. */
   {
+    const rt_tick_t started = rt_tick_get();
     const size_t hit_count =
         pocketjs_ui_core_touch_hits(binding->core, touches, input->touch_count,
                                     hits, POCKETJS_UI_MAX_TOUCHES);
+    binding->turn_stats.hit_ticks = (rt_tick_t)(rt_tick_get() - started);
     if (hit_count != input->touch_count)
       return -RT_ERROR;
   }
@@ -869,11 +893,47 @@ rt_err_t pocketjs_ui_turn(pocketjs_ui_qjs_t *binding,
       .touch_hits = hits,
       .touch_count = input->touch_count,
   };
-  rt_err_t result = pocketjs_guest_frame(binding->guest, &frame);
-  if (result != RT_EOK)
-    return result;
-  pocketjs_ui_core_tick(binding->core);
-  return pocketjs_ui_core_draw(binding->core, out_frame);
+  binding->contact_count = input->touch_count;
+  for (size_t index = 0; index < input->touch_count; ++index)
+    binding->contact_ids[index] = input->touches[index].id;
+  return finish_turn(binding, &frame, out_frame);
+}
+
+rt_err_t pocketjs_ui_cancel_touches(pocketjs_ui_qjs_t *binding,
+                                   pocketjs_ui_frame_view_t *out_frame) {
+  if (binding != NULL)
+    memset(&binding->turn_stats, 0, sizeof(binding->turn_stats));
+  if (binding == NULL || !binding->mounted || out_frame == NULL ||
+      out_frame->struct_size < sizeof(*out_frame))
+    return -RT_EINVAL;
+
+  uint32_t touches[POCKETJS_UI_MAX_TOUCHES] = {0};
+  int32_t hits[POCKETJS_UI_MAX_TOUCHES] = {0};
+  for (size_t index = 0; index < binding->contact_count; ++index)
+    touches[index] = 0x40000000U | ((uint32_t)binding->contact_ids[index] << 18U);
+  const pocketjs_guest_frame_t frame = {
+      .struct_size = sizeof(frame),
+      .analog = (pack_analog(0) << 8U) | pack_analog(0),
+      .touches = touches,
+      .touch_hits = hits,
+      .touch_count = binding->contact_count,
+  };
+  const rt_tick_t started = rt_tick_get();
+  pocketjs_ui_core_touch_hits(binding->core, NULL, 0, hits, POCKETJS_UI_MAX_TOUCHES);
+  binding->turn_stats.hit_ticks = (rt_tick_t)(rt_tick_get() - started);
+  binding->contact_count = 0;
+  return finish_turn(binding, &frame, out_frame);
+}
+
+rt_err_t pocketjs_ui_qjs_get_turn_stats(const pocketjs_ui_qjs_t *binding,
+                                      pocketjs_ui_turn_stats_t *out_stats) {
+  if (binding == NULL || out_stats == NULL ||
+      out_stats->struct_size < sizeof(*out_stats))
+    return -RT_EINVAL;
+  const size_t output_size = out_stats->struct_size;
+  *out_stats = binding->turn_stats;
+  out_stats->struct_size = output_size;
+  return RT_EOK;
 }
 
 uint32_t pocketjs_ui_qjs_tick_hz(const pocketjs_ui_qjs_t *binding) {

@@ -17,6 +17,21 @@ package storage                  RGB565 renderer
 Nothing in this directory may reach into `engine/core` semantics. The host adapts
 the platform to PocketJS's existing contract; it does not change the contract.
 
+## Touch turns
+
+The UI bridge consumes complete touch snapshots through `pocketjs_ui_turn`.
+If a device queue loses contact edges, the host calls
+`pocketjs_ui_cancel_touches` on the owning thread. This performs one UI turn
+with terminal CANCEL words for all contacts previously delivered by the binding
+and clears native capture. The host suppresses affected contacts until lift;
+an empty release snapshot cannot substitute for cancellation because it can
+activate a captured button. Guest failures still require session teardown.
+
+`pocketjs_ui_qjs_get_turn_stats` reports elapsed OS ticks for hit testing,
+the guest frame including Promise jobs, the retained core tick, and draw-list
+generation. Counters reset on each turn; stages not reached stay zero. Read
+these counters on the owning thread. They include preemption and blocking.
+
 ## Layout
 
 ```

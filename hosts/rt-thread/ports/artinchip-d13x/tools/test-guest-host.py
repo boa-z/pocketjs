@@ -92,7 +92,7 @@ static pjs_touch_state_t test_touch;
 int pjs_touch_device_start(unsigned w, unsigned h) { pjs_touch_state_init(&test_touch, w, h); return RT_EOK; }
 void pjs_touch_device_stop(void) { pjs_touch_state_init(&test_touch, 0, 0); }
 int pjs_touch_device_read(pocketjs_ui_touch_t *p) {
-    return test_touch.overflows || test_touch.invalid ? -RT_ERROR : (int)pjs_touch_state_read(&test_touch, p);
+    return test_touch.invalid ? -RT_ERROR : (int)pjs_touch_state_read(&test_touch, p);
 }
 void pjs_touch_device_status(void) {}
 void pjs_test_touch(unsigned event, unsigned x, unsigned y) {

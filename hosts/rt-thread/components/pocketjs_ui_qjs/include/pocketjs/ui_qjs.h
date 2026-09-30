@@ -36,6 +36,15 @@ typedef struct {
   uint32_t host_abi;
 } pocketjs_ui_qjs_config_t;
 
+/** Last turn's elapsed OS ticks, including preemption and blocking. */
+typedef struct {
+  size_t struct_size;
+  rt_tick_t hit_ticks;
+  rt_tick_t guest_ticks;
+  rt_tick_t tick_ticks;
+  rt_tick_t draw_ticks;
+} pocketjs_ui_turn_stats_t;
+
 rt_err_t pocketjs_ui_qjs_create(pocketjs_guest_t *guest,
                                  pocketjs_ui_core_t *core,
                                  const pocketjs_ui_qjs_config_t *config,
@@ -58,6 +67,17 @@ rt_err_t pocketjs_ui_qjs_mount(pocketjs_ui_qjs_t *binding);
 rt_err_t pocketjs_ui_turn(pocketjs_ui_qjs_t *binding,
                            const pocketjs_ui_input_t *input,
                            pocketjs_ui_frame_view_t *out_frame);
+
+/** One UI turn that cancels every contact delivered by this binding.
+ * Uses the framework's terminal CANCEL wire marker, never a release/tap.
+ * Clears native capture; hosts must suppress lost contacts until lift.
+ * No buttons or analog input are delivered in this cancellation turn. */
+rt_err_t pocketjs_ui_cancel_touches(pocketjs_ui_qjs_t *binding,
+                                   pocketjs_ui_frame_view_t *out_frame);
+
+/** Read on the binding's owning thread; unexecuted stages are zero. */
+rt_err_t pocketjs_ui_qjs_get_turn_stats(const pocketjs_ui_qjs_t *binding,
+                                      pocketjs_ui_turn_stats_t *out_stats);
 
 /** The cadence inherited from the caller-owned UI core; zero until mounted. */
 uint32_t pocketjs_ui_qjs_tick_hz(const pocketjs_ui_qjs_t *binding);
